@@ -431,7 +431,7 @@ def set_hostname(new_hostname):
     try:
         subprocess.run(["hostname", new_hostname], check=True)
     except subprocess.CalledProcessError as e:
-        print(f"Error: {e}")
+        print_error(f"Failed to set hostname. Error: {e}")
         sys.exit(1)
 ### !!! REMOVE THIS SECTION WHEN TESTING IS COMPLETE !!!
 
@@ -624,6 +624,37 @@ Puppet will be installed and configured with the following settings:
 
     set_puppet_config_option(main_config_options, section="main")
     set_puppet_config_option(agent_config_options, section="agent")
+
+    # Trigger the initial Puppet run if the user hasn't skipped it
+    # Puppet will exit with 2 if there are changes to be applied so we'll ignore that
+    if args.skip_initial_run:
+        print_important("Performing first Puppet run...")
+        puppet_args = [puppet_bin, "agent", "--test", "--detailed-exitcodes"]
+        if args.wait_for_cert > 0:
+            puppet_args.append(f"--waitforcert")
+            puppet_args.append(str(args.wait_for_cert))
+            print_important(f"Please ensure you sign the certificate for this node on the Puppet server.")
+        try:
+            subprocess.run(puppet_args, check=True)
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 2 or e.returncode == 0:
+                log.info("Puppet run completed successfully")
+                first_run = True
+            else:
+                # If we fail then we'll just log the error and continue with the bootstrap process
+                print_important(f"The initial run of Puppet has failed :(\nThe bootstrap process will continue.\nError: {e}")
+                first_run = False
+
+    # Enable the Puppet service if the user has requested it
+    if args.enable_service:
+        enable_puppet_service()
+
+    # Print out a message to the user to let them know what to do next
+    final_message = "Bootstrap process complete! :tada:\n"
+    if first_run:
+        final_message += "The initial Puppet run has completed successfully and Puppet should now be managing this node\n"
+    else:
+        final_message += "The initial Puppet run has failed :cry: this node is still being managed by Puppet but you'll need to investigate the failure.\n"
 
 if __name__ == '__main__':
     main()
