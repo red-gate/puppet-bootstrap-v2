@@ -17,12 +17,28 @@ package_manager = None
 os_id = None
 os_version = None
 
+# Function to print error messages in red
+def print_error(message):
+    print('\033[91m' + message + '\033[0m')
+
+def print_important(message):
+    print('\033[93m' + message + '\033[0m')
+
+# Function to print a welcome message
+def print_welcome():
+    message =f"""
+    Welcome to the Puppet Agent bootstrap script!
+    This script will help you install and configure Puppet Agent on your system.
+    You will be prompted for any information needed to begin the bootstrap process.
+    Please refer to the README for more information on how to use this script.
+    """
+    print(message)
 
 # Ensure the script is run as root
 def check_root():
     log.info("Checking if the script is run as root")
     if os.geteuid() != 0:
-        print("Error: This script must be run as root")
+        print_error("Error: This script must be run as root")
         sys.exit(1)
 
 
@@ -37,7 +53,7 @@ def get_os_id():
                     os_id = line.split("=")[1].strip()
                     return os_id
     except Exception as e:
-        print(f"Error: {e}")
+        print_error(f"Unable to determine OS ID. Error: {e}")
         sys.exit(1)
 
 
@@ -46,7 +62,7 @@ def check_supported_os():
     log.info("Checking if the OS is supported")
     supported_os = ["ubuntu", "debian", "centos", "rhel"]
     if os_id.lower() not in supported_os:
-        print(f"Error: Unsupported OS {os_id}")
+        print_error(f"Error: Unsupported OS {os_id}")
         sys.exit(1)
 
 
@@ -66,7 +82,7 @@ def get_os_version():
                     if line.startswith("VERSION_CODENAME="):
                         os_version = line.split("=")[1].strip()
     except Exception as e:
-        print(f"Error: {e}")
+        print_error(f"Error: {e}")
         sys.exit(1)
 
 
@@ -90,7 +106,7 @@ def check_package_manager():
     elif os.path.exists("/usr/bin/yum"):
         package_manager = "yum"
     else:
-        print("Error: No supported package manager found")
+        print_error("Error: No supported package manager found")
         sys.exit(1)
 
 
@@ -102,7 +118,7 @@ def check_package_installed(package_name):
     elif package_manager == "yum":
         cmd = f"rpm -qa | grep {package_name}"
     else:
-        print("Error: No supported package manager found")
+        print_error("Error: No supported package manager found")
         sys.exit(1)
     try:
         output = subprocess.check_output(cmd, shell=True)
@@ -126,12 +142,12 @@ def install_package(package_name, package_version=None):
         else:
             cmd = f"yum install -y {package_name}"
     else:
-        print("Error: No supported package manager found")
+        print_error("Error: No supported package manager found")
         sys.exit(1)
     try:
         subprocess.run(cmd, shell=True, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"Error: {e}")
+        print_error(f"Error: {e}")
         sys.exit(1)
 
 
@@ -207,7 +223,7 @@ def get_response(prompt, response_type, mandatory=False):
     elif response_type == "string":
         if mandatory:
             while not response:
-                response = input(prompt).strip()
+                response = input(f"{prompt}: ").strip()
         else:
             response = input(f"{prompt} (Optional - press enter to skip): ").strip()
         if response:
@@ -303,6 +319,21 @@ def enable_puppet_service():
         print(f"Error: {e}")
         sys.exit(1)
 
+# Function to check if the user wants to change the hostname
+def check_hostname_change():
+    try:
+        current_hostname = subprocess.check_output(["hostname"], text=True).strip()
+    except subprocess.CalledProcessError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    print_important(f"Current hostname: {current_hostname}")
+    change_hostname = get_response("Would you like to change the hostname?", "bool")
+    if change_hostname:
+        new_hostname = get_response("Please enter the new hostname to set", "string", mandatory=True)
+        return new_hostname
+    else:
+        return current_hostname
+
 # Function to change the hostname of the system
 def set_hostname(new_hostname):
     log.info(f"Setting the hostname to {new_hostname}")
@@ -319,14 +350,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Install Puppet Agent on Linux")
     parser.add_argument("-v", "--agent-version", help="The version of Puppet agent to install can be just the major version (e.g. '7') or the full version number (e.g. '7.12.0')")
     parser.add_argument("-s", "--puppet-server", help="The Puppet server to connect to", required=True)
-    parser.add_argument("-p" "--puppet-port", help="The port the Puppet server is listening on", default='8140')
     parser.add_argument("-e", "--environment", help="The Puppet environment to use", default='production')
-    parser.add_argument("--certname", help="The certificate name to use")
     parser.add_argument("-c", "--csr-extensions", help="The CSR extension attributes to use")
-    parser.add_argument("--enable-service", help="Enable the Puppet service", action='store_true')
-    parser.add_argument("-w", "--wait-for-cert", help="How long to wait for the certificate to be signed", default=30)
-    parser.add_argument("--new-hostname", help="The new hostname to set")
     parser.add_argument("-d", "--domain-name", help="Your domain name", required=True)
+    parser.add_argument("--puppet-port", help="The port the Puppet server is listening on", default='8140')
+    parser.add_argument("--certname", help="The certificate name to use")
+    parser.add_argument("--enable-service", help="Enable the Puppet service", default=True)
+    parser.add_argument("--wait-for-cert", help="How long to wait for the certificate to be signed", default=30)
+    parser.add_argument("--new-hostname", help="The new hostname to set")
     parser.add_argument("--skip-puppetserver-check", help="Skip the Puppet server check", action='store_false')
     parser.add_argument("--skip-confirmation", help="Skip the confirmation prompt", action='store_false')
     parser.add_argument("--skip-optional-prompts", help="Skip optional prompts", action='store_false')
@@ -343,8 +374,18 @@ def main():
     # Ensure we're running as root
     check_root()
 
+    # Check the OS is supported
+    get_os_id()
+    check_supported_os()
+
     # Parse the command line arguments
     args = parse_args()
+
+    # Print out a welcome message
+    print_welcome()
+
+    # Strip the domain name of any leading periods
+    domain_name = args.domain_name.lstrip(".")
 
     ### Check we have all the _required_ information to proceed ###
     # If we don't have a version then we'll need to prompt the user
@@ -365,15 +406,15 @@ def main():
     log.info(f"Major version: {major_version}, Exact version: {exact_version}")
 
     # Ensure the Puppet server has the domain appended to it
-    if not args.puppet_server.endswith(args.domain_name):
-        puppet_server = f"{args.puppet_server}.{args.domain_name}"
+    if not args.puppet_server.endswith(domain_name):
+        puppet_server = f"{args.puppet_server}.{domain_name}"
     else:
         puppet_server = args.puppet_server
 
     # Check if we can ping the Puppet server, if not then raise an error and exit
     # This helps us avoid half configuring a system and failing at the end
     # If --skip-puppetserver-check is set then we'll skip this check
-    if not args.skip_puppetserver_check:
+    if args.skip_puppetserver_check:
         try:
             subprocess.run(["ping", "-c", "4", puppet_server], check=True)
         except subprocess.CalledProcessError as e:
@@ -385,20 +426,18 @@ def main():
 
     # Prompt the user for any _optional_ information
     # If --skip-optional-prompts is set then we'll skip this section
-    if not args.skip_optional_prompts:
+    if args.skip_optional_prompts:
         if not args.csr_extensions:
-            csr_extensions = get_csr_attributes()
+            csr_check = get_response("Would you like to set any CSR extension attributes?", "bool")
+            if csr_check:
+                csr_extensions = get_csr_attributes()
+            else:
+                csr_extensions = None
         else:
             csr_extensions = args.csr_extensions
 
         if not args.new_hostname:
-            # TODO: Function-ize this
-            print(f"Current hostname: {current_hostname}")
-            change_hostname = get_response("Would you like to change the hostname?", "bool")
-            if change_hostname:
-                new_hostname = get_response("Please enter the new hostname to set", "string", mandatory=True)
-            else:
-                new_hostname = current_hostname
+            new_hostname = check_hostname_change()
         else:
             new_hostname = args.new_hostname
 
@@ -410,20 +449,21 @@ def main():
                 certname = None
 
     # If the new hostname doesn't have the domain appended then add it
-    if not new_hostname.endswith(args.domain_name):
-        new_hostname = f"{new_hostname}.{args.domain_name}"
+    if not new_hostname.endswith(domain_name):
+        new_hostname = f"{new_hostname}.{domain_name}"
 
     ### Ensure the user is happy and wants to proceed ###
     confirmation_message=f"""
-    Puppet will be installed and configured with the following settings:
-        - Puppet Agent version: {message_version}
-        - Puppet server: {puppet_server}
-        - Puppet port: {args.puppet_port}
-        - Puppet environment: {args.environment}
-        - Hostname: {new_hostname}\n
+Puppet will be installed and configured with the following settings:
+
+    - Puppet Agent version: {message_version}
+    - Puppet server: {puppet_server}
+    - Puppet port: {args.puppet_port}
+    - Puppet environment: {args.environment}
+    - Hostname: {new_hostname}
 """
     if args.certname:
-        confirmation_message += f"    - Certificate name: {certname}\n"
+        confirmation_message += f"    - Certificate name: {certname}"
     if csr_extensions:
         confirmation_message += "    - CSR extension attributes:\n"
         for key, value in csr_extensions.items():
@@ -432,17 +472,20 @@ def main():
         confirmation_message += f"    - Wait for certificate: {args.wait_for_cert} seconds\n"
     if args.enable_service:
         confirmation_message += "    - Enable the Puppet service: true\n"
-    # Pad out the confirmation message to make it easier to read
-    confirmation_message += "\n"
-    print(confirmation_message)
+
+    print_important(confirmation_message)
 
     # Only ask the user to confirm if we're not skipping the confirmation
-    if not args.skip_confirmation:
+    if args.skip_confirmation:
         confirm = get_response("Do you want to proceed?", "bool")
         if not confirm:
-            print("User cancelled installation")
+            print_error("User cancelled installation")
             sys.exit(0)
     else:
         # Even though the user has skipped the confirmation prompt lets just pause for 10 seconds
         # to make sure they have time to cancel the script if they want to
         time.sleep(10)
+
+
+if __name__ == '__main__':
+    main()
