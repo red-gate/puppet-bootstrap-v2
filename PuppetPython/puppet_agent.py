@@ -16,6 +16,8 @@ import time
 package_manager = None
 os_id = None
 os_version = None
+# Puppet doesn't put itself on the PATH so we need to specify the full path
+puppet_bin = "/opt/puppetlabs/bin/puppet"
 
 # Function to print error messages in red
 def print_error(message):
@@ -95,6 +97,96 @@ def split_version(version):
     else:
         exact_version = None
     return major_version, exact_version
+
+# This functions checks to see if the requested application is already installed
+# Unfortunately these tools often don't appear in the PATH so we need to query the package manager
+def check_installed(app):
+    log.info(f"Checking if {app} is already installed")
+    # Both Puppet Agent and Puppet Bolt has a - in the package name whereas Puppet Server does not :cry:
+    if app == 'agent' or app == 'bolt':
+        app = f"-{app}"
+    app_name = f"puppet{app}"
+    # I'm not sure if this is the best way to check for the package manager or not
+    if os.path.exists('/usr/bin/apt'):
+        cmd = f"dpkg -l | grep {app_name}"
+    elif os.path.exists('/usr/bin/yum'):
+        cmd = f"rpm -qa | grep {app_name}"
+    else:
+        print("Error: No supported package manager found")
+        sys.exit(1)
+    try:
+        output = subprocess.check_output(cmd, shell=True)
+        if output:
+            return True
+    except subprocess.CalledProcessError:
+        return False
+
+# Function to download the relevant rpm/deb package to /tmp
+def download_puppet_package_archive(app, major_version):
+    log.info(f"Downloading {app} package")
+    if package_manager == 'apt':
+        # Both puppet-agent and puppetserver use the same deb package whereas puppet-bolt uses a different one
+        if app == 'agent' or app == 'server':
+            url = f"https://apt.puppet.com/puppet{major_version}-release-{os_version}.deb"
+        elif app == 'bolt':
+            url = f"https://apt.puppet.com/puppet-tools-release-{os_version}.deb"
+    elif package_manager == 'yum':
+        # Again puppet-agent and puppetserver use the same rpm package whereas puppet-bolt uses a different one
+        if app == 'agent' or app == 'server':
+            url = f"https://yum.puppetlabs.com/puppet{major_version}-release-el-{os_version}.noarch.rpm"
+        elif app == 'bolt':
+            url = f"https://yum.puppet.com/puppet-tools-release-el-{os_version}.noarch.rpm"
+    else:
+        print("Error: No supported package manager found")
+        sys.exit(1)
+    try:
+        log.info(f"Downloading {app} package from {url}")
+        path, headers = urlretrieve(url, f"/tmp/puppet-{app}-release-{major_version}.deb")
+        return path
+    except Exception as e:
+        if headers:
+            log.info(f"Headers: {headers}")
+        print(f"Error: {e}")
+        sys.exit(1)
+
+# Function to install the downloaded package
+def install_package_archive(app, path):
+    log.info(f"Installing {app} package archive")
+    if package_manager == 'apt':
+        cmd = f"dpkg -i {path}"
+    elif package_manager == 'yum':
+        cmd = f"rpm -i {path}"
+    else:
+        print("Error: No supported package manager found")
+        sys.exit(1)
+    try:
+        subprocess.run(cmd, shell=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+# Function to install the given application
+# If the version parameter is passed in then install that specific version
+# Otherwise install the latest version
+def install_puppet_app(app, version):
+    log.info(f"Installing {app}")
+    # Both Puppet Agent and Puppet Bolt has a - in the package name whereas Puppet Server does not :cry:
+    if app == 'agent' or app == 'bolt':
+        app = f"-{app}"
+    if package_manager == 'apt':
+        if version:
+            complete_version = f"{version}-1{os_version}"
+            install_package(f"puppet{app}", complete_version)
+        else:
+            install_package(f"puppet{app}")
+    elif package_manager == 'yum':
+        if version:
+            install_package(f"puppet{app}", version)
+        else:
+            install_package(f"puppet{app}")
+    else:
+        print("Error: No supported package manager found")
+        sys.exit(1)
 
 
 # Function that checks what package manager is available on the system and sets the package_manager variable
@@ -268,6 +360,7 @@ def get_csr_attributes():
 # Function for setting the puppet configuration options
 # See https://www.puppet.com/docs/puppet/7/config_file_main.html for more information
 def set_puppet_config_option(config_options, config_file_path=None, section="agent"):
+    global puppet_bin
     if config_file_path is None:
         config_file_path = "/etc/puppetlabs/puppet/puppet.conf"
 
@@ -275,8 +368,6 @@ def set_puppet_config_option(config_options, config_file_path=None, section="age
 
     if section not in valid_sections:
         raise ValueError(f"Invalid section: {section}")
-
-    puppet_bin = "/opt/puppetlabs/bin/puppet"
 
     if not os.path.exists(puppet_bin):
         raise FileNotFoundError(f"Could not find the puppet command at {puppet_bin}")
@@ -370,6 +461,8 @@ def parse_args():
 def main():
     # Set up logging - by default only log errors
     log.basicConfig(level=log.ERROR, format="%(asctime)s - %(levelname)s - %(message)s")
+
+    app = 'agent'
 
     # Ensure we are in an environment that is supported and set some global variables
     get_os_id()
@@ -489,6 +582,8 @@ Puppet will be installed and configured with the following settings:
     ### Begin the installation process ###
     print_important("Beginning the bootstrap process")
 
+    # Set the hostname
+    # We do this first so we can ensure the certname is set correctly
     if new_hostname != current_hostname:
         set_hostname(new_hostname)
         # To ensure we get the correct certname we'll set the certname to the new hostname
@@ -497,7 +592,38 @@ Puppet will be installed and configured with the following settings:
             certname = new_hostname
 
     # Install the Puppet agent package
+    # First check if it's already installed, if it is then we can skip this step
+    # We make the decision to still continue with the rest of the bootstrap process
+    # if this leads to unforeseen consequences then we can change this behaviour
+    # TODO: Fail on version mismatch?
+    # TODO: Uninstall and reinstall?
+    if check_installed(app):
+        log.info(f"{app} is already installed")
+        print(f"{app} is already installed - skipping installation")
+    else:
+        log.info(f"{app} is not installed")
+        path = download_puppet_package_archive(app, major_version)
+        install_package_archive(app, path)
+        install_puppet_app(app, exact_version)
 
+    # Set CSR extension attributes if they have been provided
+    if csr_extensions:
+        set_certificate_extensions(csr_extensions)
+
+    # Set the puppet.conf options
+    main_config_options = {
+        "server": puppet_server,
+        "masterport": args.puppet_port
+    }
+    if certname:
+        main_config_options["certname"] = certname
+
+    agent_config_options = {
+        "environment": args.environment
+    }
+
+    set_puppet_config_option(main_config_options, section="main")
+    set_puppet_config_option(agent_config_options, section="agent")
 
 if __name__ == '__main__':
     main()
