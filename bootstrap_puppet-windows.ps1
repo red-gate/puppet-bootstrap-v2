@@ -203,12 +203,10 @@ function Get-Response
 }
 function Test-Administrator
 {
-    if ($IsWindows)
-    {
-        $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-        $Return = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-        Return $Return
-    }
+
+    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    $Return = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    Return $Return
 }
 function Get-CSRAttributes
 {
@@ -493,10 +491,6 @@ if ($PuppetServer -notmatch "$($DomainName)$")
 if (!$SkipPuppetserverCheck)
 {
     $arguments = @($PuppetServer)
-    if (!$IsWindows)
-    {
-        $arguments += @('-c', 4)
-    }
     $PuppetServerPing = & ping $arguments
     if ($LASTEXITCODE -ne 0)
     {
