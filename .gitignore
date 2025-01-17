@@ -1,2 +1,5 @@
 # Ignore the .vagrant directory
 .vagrant/
+
+# Ignore the pycache directory
+__pycache__/
