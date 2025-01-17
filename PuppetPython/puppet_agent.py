@@ -371,12 +371,12 @@ def main():
     # Set up logging - by default only log errors
     log.basicConfig(level=log.ERROR, format="%(asctime)s - %(levelname)s - %(message)s")
 
-    # Ensure we're running as root
-    check_root()
-
-    # Check the OS is supported
+    # Ensure we are in an environment that is supported and set some global variables
     get_os_id()
     check_supported_os()
+    check_root()
+    get_os_version()
+    check_package_manager()
 
     # Parse the command line arguments
     args = parse_args()
@@ -462,7 +462,7 @@ Puppet will be installed and configured with the following settings:
     - Puppet environment: {args.environment}
     - Hostname: {new_hostname}
 """
-    if args.certname:
+    if certname:
         confirmation_message += f"    - Certificate name: {certname}"
     if csr_extensions:
         confirmation_message += "    - CSR extension attributes:\n"
@@ -485,6 +485,18 @@ Puppet will be installed and configured with the following settings:
         # Even though the user has skipped the confirmation prompt lets just pause for 10 seconds
         # to make sure they have time to cancel the script if they want to
         time.sleep(10)
+
+    ### Begin the installation process ###
+    print_important("Beginning the bootstrap process")
+
+    if new_hostname != current_hostname:
+        set_hostname(new_hostname)
+        # To ensure we get the correct certname we'll set the certname to the new hostname
+        # unless the user has specified a custom certname
+        if not certname:
+            certname = new_hostname
+
+    # Install the Puppet agent package
 
 
 if __name__ == '__main__':
