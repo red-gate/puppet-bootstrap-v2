@@ -536,6 +536,11 @@ def parse_args():
         default="/opt/puppetlabs/bin/puppetserver",
     )
     parser.add_argument(
+        "--eyaml-key-path",
+        help="The path to the eyaml keys",
+        default="/etc/puppetlabs/puppet/keys",
+    )
+    parser.add_argument(
         "--skip-optional-prompts",
         help="Skip optional prompts and use default values",
         action="store_true",
@@ -568,13 +573,40 @@ def check_gem_installed(gem_name):
 def install_gem(gem_name, gem_version=None):
     log.info(f"Installing {gem_name}")
     if gem_version:
-        cmd = f"gem install {gem_name} -v {gem_version}"
+        cmd = f"gem install {gem_name} -v \"{gem_version}\""
     else:
         cmd = f"gem install {gem_name}"
     try:
         subprocess.run(cmd, shell=True, check=True)
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to install {gem_name}. Error: {e}")
+        sys.exit(1)
+
+# Function to install a gem using the puppetserver gem command
+def install_gem_puppetserver(puppetserver_path, gem_name, gem_version=None):
+    log.info(f"Installing {gem_name}")
+    if gem_version:
+        cmd = f"{puppetserver_path} gem install {gem_name} -v \"{gem_version}\""
+    else:
+        cmd = f"{puppetserver_path} gem install {gem_name}"
+    try:
+        subprocess.run(cmd, shell=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to install {gem_name}. Error: {e}")
+        sys.exit(1)
+
+# Function to copy the eyaml keys to the correct location
+def copy_eyaml_keys(eyaml_privatekey, eyaml_publickey, eyaml_key_path):
+    log.info("Writing the eyaml keys to the correct location")
+    eyaml_publickey_path = os.path.join(eyaml_key_path, "public_key.pkcs7.pem")
+    eyaml_privatekey_path = os.path.join(eyaml_key_path, "private_key.pkcs7.pem")
+    try:
+        with open(eyaml_publickey_path, "w") as f:
+            f.write(eyaml_publickey)
+        with open(eyaml_privatekey_path, "w") as f:
+            f.write(eyaml_privatekey)
+    except Exception as e:
+        print_error(f"Failed to write eyaml keys. Error: {e}")
         sys.exit(1)
 
 
@@ -681,3 +713,61 @@ def add_github_to_known_hosts():
         except Exception as e:
             raise Exception(f"Failed to create known_hosts file.\n{e}")
 
+def main():
+    # Set up logging - by default only log errors
+    log.basicConfig(level=log.ERROR, format="%(asctime)s - %(levelname)s - %(message)s")
+
+    # Set the application we want to install - this will be used later
+    app = "server"
+
+    # Ensure we are in an environment that is supported and set some global variables
+    get_os_id()
+    check_supported_os()
+    check_root()
+    get_os_version()
+    check_package_manager()
+
+    # Parse the command line arguments
+    args = parse_args()
+
+    # If the user has supplied either an eyaml private or public key but not the other then error
+    if (args.eyaml_privatekey and not args.eyaml_publickey) or (
+        args.eyaml_publickey and not args.eyaml_privatekey
+    ):
+        print_error("Error: When supplying eyaml keys you _must_ supply both the eyaml private and public keys")
+        sys.exit(1)
+
+    # Print out a welcome message
+    print_welcome()
+
+    ### Check for any information we absolute must have and prompt the user if not provided ###
+    if not args.domain_name:
+        domain_name = get_response("Please enter the domain name (e.g. example.com)", "string", mandatory=True)
+    else:
+        domain_name = args.domain_name
+    # Strip the domain name of any leading dots
+    domain_name = domain_name.lstrip(".")
+
+    # Check if the user wants to change the hostname if none is provided
+    if not args.new_hostname:
+        new_hostname = check_hostname_change()
+    else:
+        new_hostname = args.new_hostname
+
+    # Ensure the hostname has the domain name appended
+    if not new_hostname.endswith(domain_name):
+        new_hostname = f"{new_hostname}.{domain_name}"
+
+    # If we don't have a version then we'll need to prompt the user
+    if not args.version:
+        version_prompt = None
+        while not version_prompt or not re.match(r'^\d+(\.\d+)*$', version_prompt):
+            version_prompt = input('Enter the version of Puppetserver to install. Can be a major version (e.g. 7) or exact (e.g 7.1.2): ')
+        version = version_prompt
+    else:
+        version = args.version
+
+    ### Check for any _optional_ information that and prompt if not provided ###
+
+if __name__ == '__main__':
+    main()
