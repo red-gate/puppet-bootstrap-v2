@@ -502,6 +502,10 @@ def parse_args():
         help="The deploy key for the GitHub repository (if it's private)",
     )
     parser.add_argument(
+        "--deploy-key-owner",
+        help="The user on system who should own the deploy key",
+    )
+    parser.add_argument(
         "--eyaml-privatekey",
         help="The private key for the eyaml encryption",
     )
@@ -612,3 +616,68 @@ def deploy_environments(r10k_path=None):
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to deploy environments with r10k. Error: {e}")
         sys.exit(1)
+
+# Function to generate a deploy key (ssh key) for the GitHub repository
+def generate_deploy_key(deploy_key_owner, deploy_key_name):
+    log.info("Generating a deploy key for the GitHub repository")
+    deploy_key_path = f"/home/{deploy_key_owner}/.ssh/{deploy_key_name}"
+    print_important("A deploy key will now be generated for you to copy to your repository")
+    # If the key already exists then remove it
+    if os.path.exists(deploy_key_path):
+        print_important("An existing deploy key was found and will be removed")
+        try:
+            os.remove(deploy_key_path)
+            os.remove(deploy_key_path + ".pub")
+        except Exception as e:
+            print_error(f"Failed to remove existing deploy key. Error: {e}")
+            sys.exit(1)
+    try:
+        subprocess.run(["ssh-keygen", "-t", "rsa", "-b", "4096", "-C", "r10k", "-f", deploy_key_path, "-N", ""], check=True)
+        # Ensure both keys are owned by the deploy key owner
+        subprocess.run(["chown", deploy_key_owner, deploy_key_path], check=True)
+        subprocess.run(["chown", f"{deploy_key_owner}.", deploy_key_path + ".pub"], check=True)
+        # Set the ACLs to 0600
+        subprocess.run(["chmod", "0600", deploy_key_path], check=True)
+        # Get the contents of the public key to pass to the user
+        with open(deploy_key_path + ".pub") as f:
+            public_key = f.read()
+        print_important(f"Please copy the following deploy key to your repository:\n{public_key}")
+        print_important(f"Once you've copied the key press enter to continue")
+        input()
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to generate deploy key. Error: {e}")
+        sys.exit(1)
+
+# Function to add github.com to known hosts - this saves us getting prompted when we clone the repository
+# especially if we're running unattended!
+def add_github_to_known_hosts():
+    log.info("Adding github.com to known hosts")
+    print('Adding github.com to known hosts')
+    try:
+        keyscan = subprocess.check_output(['ssh-keyscan', 'github.com']).decode('utf-8')
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Failed to scan github.com key.\n{e}")
+
+    known_hosts_file = '/root/.ssh/known_hosts' # TODO: make this match the deploy key owner
+
+    try:
+        with open(known_hosts_file, 'r') as file:
+            known_hosts_content = file.read()
+    except FileNotFoundError:
+        known_hosts_content = None
+
+    if known_hosts_content:
+        if not re.search(re.escape(keyscan), known_hosts_content):
+            try:
+                with open(known_hosts_file, 'a') as file:
+                    file.write(keyscan)
+            except Exception as e:
+                raise Exception(f"Failed to add github.com key.\n{e}")
+    else:
+        try:
+            os.makedirs(os.path.dirname(known_hosts_file), exist_ok=True)
+            with open(known_hosts_file, 'w') as file:
+                file.write(keyscan)
+        except Exception as e:
+            raise Exception(f"Failed to create known_hosts file.\n{e}")
+
