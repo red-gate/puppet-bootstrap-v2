@@ -10,6 +10,7 @@ import argparse
 from urllib.request import urlretrieve
 import re
 import time
+import json
 
 ### !!! REMOVE THIS SECTION WHEN TESTING IS COMPLETE !!!
 # Global variables to save having to set them multiple times
@@ -488,6 +489,9 @@ def parse_args():
         "-c",
         "--csr-extensions",
         help="The CSR extension attributes to set for the Puppet agent requests",
+        # We have to use json.loads to convert the string to a dictionary, there's no other way that I'm aware of
+        # to pass a dictionary as a command line argument
+        type=json.loads,
     )
     parser.add_argument(
         "--puppetserver-class",
@@ -910,34 +914,44 @@ The Puppetserver will be configured with the following settings:
     - Domain name: {domain_name}
 """
     if r10k_repository:
-        confirmation_message += f"   - r10k: enabled\n"
+        confirmation_message += f"    - r10k: enabled\n"
         if r10k_version:
-            confirmation_message += f"   - r10k version: {r10k_version}"
-        confirmation_message += f"   - r10k repository: {r10k_repository}"
+            confirmation_message += f"    - r10k version: {r10k_version}\n"
+        confirmation_message += f"    - r10k repository: {r10k_repository}\n"
         if r10k_repository_key:
-            confirmation_message += f"   - r10k repository key: {r10k_repository_key}"
+            confirmation_message += f"    - r10k repository key: <redacted>\n"
         if r10k_repository_key_owner:
-            confirmation_message += f"   - r10k repository key owner: {r10k_repository_key_owner}"
+            confirmation_message += f"    - r10k repository key owner: {r10k_repository_key_owner}\n"
         if bootstrap_environment:
-            confirmation_message += f"   - Bootstrap environment: {bootstrap_environment}"
+            confirmation_message += f"    - Bootstrap environment: {bootstrap_environment}\n"
         if bootstrap_hiera:
-            confirmation_message += f"   - Bootstrap Hiera file: {bootstrap_hiera}"
+            confirmation_message += f"    - Bootstrap Hiera file: {bootstrap_hiera}\n"
         if puppetserver_class:
-            confirmation_message += f"   - Puppetserver class: {puppetserver_class}"
+            confirmation_message += f"    - Puppetserver class: {puppetserver_class}\n"
     else:
-        confirmation_message += "   - r10k: disabled\n"
+        confirmation_message += "    - r10k: disabled\n"
     if eyaml_privatekey:
-        confirmation_message += "   - eyaml encryption: enabled\n"
+        confirmation_message += "    - eyaml encryption: enabled\n"
         if eyaml_path:
-            confirmation_message += f"   - eyaml key path: {eyaml_path}\n"
+            confirmation_message += f"    - eyaml key path: {eyaml_path}\n"
     else:
-        confirmation_message += "   - eyaml encryption: disabled\n"
+        confirmation_message += "    - eyaml encryption: disabled\n"
     if csr_extensions:
-        confirmation_message += "   - CSR extension attributes:\n"
+        confirmation_message += "    - CSR extension attributes:\n"
         for key, value in csr_extensions.items():
-            confirmation_message += f"       - {key}: {value}\n"
+            confirmation_message += f"        - {key}: {value}\n"
 
     print_important(confirmation_message)
+
+    if not args.skip_confirmation:
+        confirmation = get_response("Do you want to continue?", "bool")
+        if not confirmation:
+            print_error("User cancelled bootstrap process")
+            sys.exit(0)
+    else:
+        # Just to be safe we'll pause for a moment so the user can reade the output
+        # Even if the user has skipped the confirmation
+        time.sleep(10)
 
 if __name__ == '__main__':
     main()
