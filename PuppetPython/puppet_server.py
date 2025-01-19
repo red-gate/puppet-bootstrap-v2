@@ -592,6 +592,15 @@ def install_gem(gem_name, gem_version=None):
         print_error(f"Failed to install {gem_name}. Error: {e}")
         sys.exit(1)
 
+# Function to check if a gem is installed using the puppetserver gem command
+def check_gem_installed_puppetserver(puppetserver_path, gem_name):
+    log.info(f"Checking if {gem_name} is installed")
+    cmd = f'{puppetserver_path} gem list -i {gem_name}'
+    try:
+        subprocess.run(cmd, shell=True, check=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
 # Function to install a gem using the puppetserver gem command
 def install_gem_puppetserver(puppetserver_path, gem_name, gem_version=None):
@@ -654,7 +663,8 @@ def deploy_environments(r10k_path=None):
     if r10k_path:
         r10k_bin = r10k_path
     else:
-        r10k_bin = "/opt/puppetlabs/puppet/bin/r10k"
+        # Hope that r10k is in the PATH
+        r10k_bin = "r10k"
     try:
         subprocess.run([r10k_bin, "deploy", "environment", "--puppetfile"], check=True)
     except subprocess.CalledProcessError as e:
@@ -707,48 +717,61 @@ def generate_deploy_key(deploy_key_owner, deploy_key_name):
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to generate deploy key. Error: {e}")
         sys.exit(1)
+    return deploy_key_path
+
 
 # Function to write the deploy key to the correct location if the user is supplying one
-def write_deploy_key(private_deploy_key, public_deploy_key, deploy_key_owner, deploy_key_name):
+# We technically support setting the public key as well but we don't currently ask for it
+# As I can't see any reason why we'd need it right now other than it's nice to have
+def write_deploy_key(
+    private_deploy_key, deploy_key_owner, deploy_key_name, public_deploy_key=None
+):
     log.info("Writing the deploy key to the correct location")
     deploy_key_path = f"/home/{deploy_key_owner}/.ssh/{deploy_key_name}"
     deploy_key_pub_path = f"{deploy_key_path}.pub"
     try:
         with open(deploy_key_path, "w") as f:
             f.write(private_deploy_key)
-        with open(deploy_key_pub_path, "w") as f:
-            f.write(public_deploy_key)
+        if public_deploy_key:
+            with open(deploy_key_pub_path, "w") as f:
+                f.write(public_deploy_key)
     except Exception as e:
         print_error(f"Failed to write deploy key. Error: {e}")
         sys.exit(1)
     set_deploy_key_permissions(deploy_key_path, deploy_key_owner)
+    return deploy_key_path
+
 
 # Function that sets the permissions on the deploy key
 def set_deploy_key_permissions(deploy_key_path, deploy_key_owner):
     log.info("Setting the permissions on the deploy key")
     try:
         subprocess.run(["chown", deploy_key_owner, deploy_key_path], check=True)
-        subprocess.run(
-            ["chown", f"{deploy_key_owner}.", deploy_key_path + ".pub"], check=True
-        )
+        # If the public key exists then set the permissions on that too
+        if os.path.exists(deploy_key_path + ".pub"):
+            subprocess.run(
+                ["chown", f"{deploy_key_owner}.", deploy_key_path + ".pub"], check=True
+            )
         # Set the ACLs to 0600
         subprocess.run(["chmod", "0600", deploy_key_path], check=True)
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to set deploy key permissions. Error: {e}")
         sys.exit(1)
 
-# Function to add github.com to known hosts - this saves us getting prompted when we clone the repository
+
+# Function to add the origin source control to known hosts - this saves us getting prompted when we clone the repository
 # especially if we're running unattended!
-def add_github_to_known_hosts():
-    log.info("Adding github.com to known hosts")
-    print("Adding github.com to known hosts")
+# We technically support setting the origin to something other than github.com but we don't currently ask for it
+def add_origin_to_known_hosts(owner, origin="github.com"):
+    log.info(f"Adding {origin} to known hosts")
+    print(f"Adding {origin} to known hosts")
     try:
-        keyscan = subprocess.check_output(["ssh-keyscan", "github.com"]).decode("utf-8")
+        keyscan = subprocess.check_output(["ssh-keyscan", origin]).decode("utf-8")
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to scan github.com key.\n{e}")
 
     known_hosts_file = (
-        "/root/.ssh/known_hosts"  # TODO: make this match the deploy key owner
+        f"/{owner}/.ssh/known_hosts"
     )
 
     try:
@@ -763,7 +786,7 @@ def add_github_to_known_hosts():
                 with open(known_hosts_file, "a") as file:
                     file.write(keyscan)
             except Exception as e:
-                raise Exception(f"Failed to add github.com key.\n{e}")
+                raise Exception(f"Failed to add {origin} key.\n{e}")
     else:
         try:
             os.makedirs(os.path.dirname(known_hosts_file), exist_ok=True)
@@ -864,15 +887,27 @@ def main():
         # The repository might need an ssh key if it's private, check with the user
         if not args.r10k_repository_key:
             if not args.skip_optional_prompts:
-                r10k_repository_key_check = None
-                while r10k_repository_key_check is None:
-                    r10k_repository_key_check = get_response(
-                        "Do you have a deploy/ssh key for the repository?", "bool"
+                private_repository_check = None
+                while private_repository_check is None:
+                    private_repository_check = get_response(
+                        "Is the repository private?", "bool"
                     )
-                if r10k_repository_key_check:
-                    r10k_repository_key = get_response(
-                        "Please enter the deploy/ssh key", "string", mandatory=True
-                    )
+                if private_repository_check:
+                    r10k_repository_key_check = None
+                    while r10k_repository_key_check is None:
+                        r10k_repository_key_check = get_response(
+                            "Do you already have a deploy/ssh key for the repository?",
+                            "bool",
+                        )
+                    if r10k_repository_key_check:
+                        r10k_repository_key = get_response(
+                            "Please enter the deploy/ssh key", "string", mandatory=True
+                        )
+                    else:
+                        # User does not currently have a key but will need one
+                        # We'll generate one for them later
+                        r10k_repository_key = None
+                        generate_r10k_key = True
                 else:
                     r10k_repository_key = None
             else:
@@ -881,13 +916,13 @@ def main():
             r10k_repository_key = args.r10k_repository_key
         # If we've got a repository key then and the user hasn't supplied the owner then it will default to 'root'
         # Check if the user wants to change this
-        if r10k_repository_key:
+        if r10k_repository_key or generate_r10k_key:
             r10k_repository_key_owner = args.r10k_repository_key_owner
             if not args.skip_optional_prompts and r10k_repository_key_owner == "root":
                 r10k_repository_key_owner_check = None
                 while r10k_repository_key_owner_check is None:
                     r10k_repository_key_owner_check = get_response(
-                        "Currently the deploy key owner is set to 'root'. Would you like to change this?",
+                        "Currently the deploy key owner is set to be 'root'. Would you like to change this?",
                         "bool",
                     )
                 if r10k_repository_key_owner_check:
@@ -1099,10 +1134,64 @@ The Puppetserver will be configured with the following settings:
         install_package_archive(app, path)
         install_puppet_app(app, exact_version)
 
+    # If using hiera-eyaml then install it as both a regular gem and a puppetserver gem
+    if eyaml_privatekey:
+        if not check_gem_installed("hiera-eyaml"):
+            install_gem("hiera-eyaml", args.hiera_eyaml_version)
+        if not check_gem_installed_puppetserver(args.puppetserver_path, "hiera-eyaml"):
+            install_gem_puppetserver(
+                args.puppetserver_path, "hiera-eyaml", args.hiera_eyaml_version
+            )
+        # Copy the eyaml keys to the correct location
+        copy_eyaml_keys(eyaml_privatekey, eyaml_publickey, eyaml_path)
+
+    # If we've got a bootstrap environment then ensure it's set in the puppet.conf
+    if bootstrap_environment:
+        set_puppet_config_option(
+            {"environment": bootstrap_environment}, section="agent"
+        )
+
+    # Set the CSR extension attributes if we have any
+    if csr_extensions:
+        set_certificate_extensions(csr_extensions)
+
     # Install and configure r10k if we're using it
     if r10k_repository:
         if not check_gem_installed("r10k"):
             install_gem("r10k", r10k_version)
+        # If we need to generate or write a deploy key then do so now
+        if generate_r10k_key:
+            deploy_key_path = generate_deploy_key(
+                r10k_repository_key_owner, "r10k_deploy_key"
+            )
+        elif r10k_repository_key:
+            deploy_key_path = write_deploy_key(
+                r10k_repository_key, r10k_repository_key_owner, "r10k_deploy_key"
+            )
+        # Configure r10k
+        configure_r10k(r10k_repository, r10k_repo_name, deploy_key_path)
+        # Deploy the environments
+        # TODO: Work out how to set r10k_path
+        print_important("Performing first run of r10k, this may take some time...")
+        deploy_environments()
+        # Test that our bootstrap environment exists under /etc/puppetlabs/code/environments
+        if not os.path.exists(
+            f"/etc/puppetlabs/code/environments/{bootstrap_environment}"
+        ):
+            print_error(
+                f"Error: The bootstrap environment '{bootstrap_environment}' does not exist under /etc/puppetlabs/code/environments. Are you sure it's correct?"
+            )
+            sys.exit(1)
+        # Test that our bootstrap Hiera file exists under /etc/puppetlabs/code/environments/{bootstrap_environment}
+        if not os.path.exists(
+            f"/etc/puppetlabs/code/environments/{bootstrap_environment}/{bootstrap_hiera}"
+        ):
+            print_error(
+                f"Error: The bootstrap Hiera file '{bootstrap_hiera}' does not exist under /etc/puppetlabs/code/environments/{bootstrap_environment}. Are you sure it's correct?"
+            )
+            sys.exit(1)
+        # Finally keyscan our origin so we don't get prompted when we clone the repository
+        add_origin_to_known_hosts()
 
 
 if __name__ == "__main__":
