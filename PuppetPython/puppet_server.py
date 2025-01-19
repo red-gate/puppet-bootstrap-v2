@@ -639,6 +639,8 @@ def copy_eyaml_keys(eyaml_privatekey, eyaml_publickey, eyaml_key_path):
     eyaml_publickey_path = os.path.join(eyaml_key_path, "public_key.pkcs7.pem")
     eyaml_privatekey_path = os.path.join(eyaml_key_path, "private_key.pkcs7.pem")
     try:
+        # Ensure the directory exists
+        os.makedirs(eyaml_key_path, exist_ok=True)
         with open(eyaml_publickey_path, "w") as f:
             f.write(eyaml_publickey)
         with open(eyaml_privatekey_path, "w") as f:
@@ -658,16 +660,18 @@ def configure_r10k(github_repo, environment_name, deploy_key_path=None):
 # A list of git repositories to pull from
 :sources:
     :{environment_name}:
-    basedir: '/etc/puppetlabs/code/environments'
-    remote: '{github_repo}'
+        basedir: '/etc/puppetlabs/code/environments'
+        remote: '{github_repo}'
 """
     if deploy_key_path:
         r10k_config += f"""
 git:
     private_key: '{deploy_key_path}'
 """
-    r10k_config_path = "/etc/puppetlabs/r10k/r10k.yaml"
+    r10k_config_dir = "/etc/puppetlabs/r10k"
+    r10k_config_path = f"{r10k_config_dir}/r10k.yaml"
     try:
+        os.makedirs(r10k_config_dir, exist_ok=True)
         with open(r10k_config_path, "w") as f:
             f.write(r10k_config)
     except Exception as e:
@@ -744,7 +748,11 @@ def write_deploy_key(
     private_deploy_key, deploy_key_owner, deploy_key_name, public_deploy_key=None
 ):
     log.info("Writing the deploy key to the correct location")
-    deploy_key_path = f"/home/{deploy_key_owner}/.ssh/{deploy_key_name}"
+    if deploy_key_owner == "root":
+        owner_ssh_dir = "/root/.ssh"
+    else:
+        owner_ssh_dir = f"/home/{deploy_key_owner}/.ssh"
+    deploy_key_path = f"{owner_ssh_dir}/{deploy_key_name}"
     deploy_key_pub_path = f"{deploy_key_path}.pub"
     try:
         with open(deploy_key_path, "w") as f:
@@ -787,7 +795,10 @@ def add_origin_to_known_hosts(owner, origin="github.com"):
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to scan github.com key.\n{e}")
 
-    known_hosts_file = f"/{owner}/.ssh/known_hosts"
+    if owner == "root":
+        known_hosts_file = "/root/.ssh/known_hosts"
+    else:
+        known_hosts_file = f"/home/{owner}/.ssh/known_hosts"
 
     try:
         with open(known_hosts_file, "r") as file:
@@ -896,6 +907,8 @@ def main():
                 r10k_repository = None
         else:
             r10k_repository = None
+    else:
+        r10k_repository = args.r10k_repository
 
     # If the user does want to use r10k then we need to prompt for some additional information if not provided
     if r10k_repository:
@@ -933,10 +946,13 @@ def main():
                         generate_r10k_key = True
                 else:
                     r10k_repository_key = None
+                    generate_r10k_key = False
             else:
                 r10k_repository_key = None
+                generate_r10k_key = False
         else:
             r10k_repository_key_path = args.r10k_repository_key
+            generate_r10k_key = False
             try:
                 with open(r10k_repository_key_path) as f:
                     r10k_repository_key = f.read()
@@ -1183,6 +1199,11 @@ The Puppetserver will be configured with the following settings:
         install_package_archive(app, path)
         install_puppet_app(app, exact_version)
 
+    # If hiera-eyaml or r10k are being used then we'll need to make sure ruby is installed
+    if eyaml_privatekey or r10k_repository:
+        if not check_package_installed("ruby-rubygems"):
+            install_package("ruby-rubygems")
+
     # If using hiera-eyaml then install it as both a regular gem and a puppetserver gem
     if eyaml_privatekey:
         if not check_gem_installed("hiera-eyaml"):
@@ -1219,6 +1240,9 @@ The Puppetserver will be configured with the following settings:
             )
         # Configure r10k
         configure_r10k(r10k_repository, r10k_repo_name, deploy_key_path)
+        # Keyscan our origin
+        # !!! This _must_ be done before running r10k otherwise it will fail with a 128 error
+        add_origin_to_known_hosts(r10k_repository_key_owner)
         # Deploy the environments
         # TODO: Work out how to set r10k_path
         print_important("Performing first run of r10k, this may take some time...")
@@ -1239,8 +1263,6 @@ The Puppetserver will be configured with the following settings:
                 f"Error: The bootstrap Hiera file '{bootstrap_hiera}' does not exist under /etc/puppetlabs/code/environments/{bootstrap_environment}. Are you sure it's correct?"
             )
             sys.exit(1)
-        # Finally keyscan our origin so we don't get prompted when we clone the repository
-        add_origin_to_known_hosts()
 
 
 if __name__ == "__main__":
