@@ -611,7 +611,10 @@ def install_gem(gem_name, gem_version=None):
 # Function to check if a gem is installed using the puppetserver gem command
 def check_gem_installed_puppetserver(puppetserver_path, gem_name):
     log.info(f"Checking if {gem_name} is installed")
-    cmd = f"{puppetserver_path} gem list -i {gem_name}"
+    # ! 2025-01-19: The puppetserver gem command is warning of a "WARN FilenoUtil"
+    # ! error when running the command. It doesn't seem to affect the functionality
+    # ! but it's noisy so we'll redirect stderr to /dev/null for the time being
+    cmd = f"{puppetserver_path} gem list -i {gem_name} 2>/dev/null"
     try:
         subprocess.run(cmd, shell=True, check=True)
         return True
@@ -1263,7 +1266,8 @@ The Puppetserver will be configured with the following settings:
             deploy_key_path = write_deploy_key(
                 r10k_repository_key, r10k_repository_key_owner, "r10k_deploy_key"
             )
-        # Ensure the deploy key is set in the ssh config
+        # When using shellgit as the provider for r10k (the default) we need to set the ssh key in .ssh/config
+        # Otherwise ssh doesn't know where to find the key and r10k will fail with a 128 error
         set_ssh_key_for_origin(r10k_repository_key_owner, deploy_key_path)
         # Configure r10k
         configure_r10k(r10k_repository, r10k_repo_name, deploy_key_path)
