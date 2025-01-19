@@ -520,7 +520,7 @@ def parse_args():
     )
     parser.add_argument(
         "--r10k-repository-key",
-        help="The deploy/ssh key for the repository (if it's private)",
+        help="The path on disk to the deploy key to be used with the R10k repository (only required if the repository is private)",
     )
     parser.add_argument(
         "--r10k-repository-key-owner",
@@ -534,11 +534,11 @@ def parse_args():
     )
     parser.add_argument(
         "--eyaml-privatekey",
-        help="The private key for the eyaml encryption",
+        help="The path on disk to the eyaml private key, only needed if you wish to use eyaml encryption",
     )
     parser.add_argument(
         "--eyaml-publickey",
-        help="The public key for the eyaml encryption",
+        help="The path on disk to the eyaml public key, only needed if you wish to use eyaml encryption",
     )
     parser.add_argument(
         "--hiera-eyaml-version",
@@ -547,6 +547,8 @@ def parse_args():
     parser.add_argument(
         "--r10k-path",
         help="The path to the r10k binary",
+        # Default to 'r10k' as we hope it's in the PATH
+        default="r10k",
     )
     parser.add_argument(
         "--puppet-agent-path",
@@ -560,7 +562,7 @@ def parse_args():
     )
     parser.add_argument(
         "--eyaml-key-path",
-        help="The path to the eyaml keys",
+        help="The path to where to store the eyaml keys",
         default="/etc/puppetlabs/puppet/keys",
     )
     parser.add_argument(
@@ -908,8 +910,6 @@ def main():
                 if private_repository_check:
                     r10k_repository_key_check = None
                     while r10k_repository_key_check is None:
-                        # NOTE: We require the deploy key to be on disk as reading multiple lines from the user is quite
-                        # difficult and error prone - this script is designed to be user friendly
                         r10k_repository_key_check = get_response(
                             "Do you already have a deploy/ssh key for the repository on disk?",
                             "bool",
@@ -936,7 +936,15 @@ def main():
             else:
                 r10k_repository_key = None
         else:
-            r10k_repository_key = args.r10k_repository_key
+            r10k_repository_key_path = args.r10k_repository_key
+            try:
+                with open(r10k_repository_key_path) as f:
+                    r10k_repository_key = f.read()
+            except Exception as e:
+                print_error(
+                    f"Error: Failed to read the deploy key at {r10k_repository_key_path}. Error: {e}"
+                )
+                sys.exit(1)
         # If we've got a repository key then and the user hasn't supplied the owner then it will default to 'root'
         # Check if the user wants to change this
         if r10k_repository_key or generate_r10k_key:
@@ -958,8 +966,8 @@ def main():
                 r10k_repository_key_owner = args.r10k_repository_key_owner
         else:
             r10k_repository_key_owner = None
-        # If we're using r10k then the default bootstrap environment is 'production' but we can change this
-        # if the user wants to
+        # We need to know which environment (aka branch) we're going to bootstrap from
+        # The default is 'production' but the user may want to change this
         bootstrap_environment = args.bootstrap_environment
         if not args.skip_optional_prompts and bootstrap_environment == "production":
             bootstrap_environment_check = None
@@ -1053,10 +1061,20 @@ def main():
             eyaml_privatekey = None
             eyaml_publickey = None
     else:
-        eyaml_privatekey = args.eyaml_privatekey
-        eyaml_publickey = args.eyaml_publickey
+        eyaml_privatekey_path = args.eyaml_privatekey
+        eyaml_publickey_path = args.eyaml_publickey
+        try:
+            with open(eyaml_privatekey_path) as f:
+                eyaml_privatekey = f.read()
+            with open(eyaml_publickey_path) as f:
+                eyaml_publickey = f.read()
+        except Exception as e:
+            print_error(f"Failed to read eyaml keys. Error: {e}")
+            sys.exit(1)
 
     if eyaml_privatekey and eyaml_publickey:
+        # We don't prompt for this parameter as we've got a default set and if a user knows
+        # they need to change it then they'll know how to supply it ;)
         eyaml_path = args.eyaml_key_path
 
     # Check if the user wants to set any CSR extension attributes
