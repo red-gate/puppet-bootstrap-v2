@@ -651,7 +651,8 @@ def copy_eyaml_keys(eyaml_privatekey, eyaml_publickey, eyaml_key_path):
 
 
 # Function to configure r10k
-def configure_r10k(github_repo, environment_name, deploy_key_path=None):
+# TODO: finish implementing the rugged git provider
+def configure_r10k(github_repo, environment_name, deploy_key_path=None, git_provider='shellgit'):
     log.info("Configuring r10k")
     r10k_config = f"""
 # The location to use for storing cached Git repos
@@ -663,10 +664,14 @@ def configure_r10k(github_repo, environment_name, deploy_key_path=None):
         basedir: '/etc/puppetlabs/code/environments'
         remote: '{github_repo}'
 """
-    if deploy_key_path:
+    # !!! Setting the private_key option in the r10k configuration file is only supported when using the rugged git provider
+    # See: https://github.com/puppetlabs/r10k/blob/main/r10k.yaml.example
+    if deploy_key_path and git_provider == 'rugged':
         r10k_config += f"""
 git:
+    provider: 'rugged'
     private_key: '{deploy_key_path}'
+    username: 'git'
 """
     r10k_config_dir = "/etc/puppetlabs/r10k"
     r10k_config_path = f"{r10k_config_dir}/r10k.yaml"
@@ -821,6 +826,23 @@ def add_origin_to_known_hosts(owner, origin="github.com"):
         except Exception as e:
             raise Exception(f"Failed to create known_hosts file.\n{e}")
 
+# Function to set ssh key for the origin in .ssh/config
+def set_ssh_key_for_origin(owner, deploy_key_path, origin="github.com"):
+    log.info(f"Setting ssh key for {origin} in .ssh/config")
+    print(f"Setting ssh key for {origin} in .ssh/config")
+    if owner == "root":
+        ssh_config_file = "/root/.ssh/config"
+    else:
+        ssh_config_file = f"/home/{owner}/.ssh/config"
+
+    try:
+        with open(ssh_config_file, "w") as f:
+            f.write(f"Host {origin}\n")
+            f.write(f"  IdentityFile {deploy_key_path}\n")
+            f.write(f"  User git\n")
+    except Exception as e:
+        print_error(f"Failed to write ssh config file. Error: {e}")
+        sys.exit(1)
 
 def main():
     # Set up logging - by default only log errors
@@ -1199,7 +1221,7 @@ The Puppetserver will be configured with the following settings:
         install_package_archive(app, path)
         install_puppet_app(app, exact_version)
 
-    # If hiera-eyaml or r10k are being used then we'll need to make sure ruby is installed
+    # If hiera-eyaml or r10k are being used then we'll need to make sure rubygems is installed
     if eyaml_privatekey or r10k_repository:
         if not check_package_installed("ruby-rubygems"):
             install_package("ruby-rubygems")
@@ -1227,6 +1249,9 @@ The Puppetserver will be configured with the following settings:
 
     # Install and configure r10k if we're using it
     if r10k_repository:
+        bootstrap_environment_path = f"/etc/puppetlabs/code/environments/{bootstrap_environment}"
+        bootstrap_hiera_path = f"{bootstrap_environment_path}/{bootstrap_hiera}"
+        module_path = f"{bootstrap_environment_path}/modules:{bootstrap_environment_path}/ext-modules"
         if not check_gem_installed("r10k"):
             install_gem("r10k", r10k_version)
         # If we need to generate or write a deploy key then do so now
@@ -1238,6 +1263,8 @@ The Puppetserver will be configured with the following settings:
             deploy_key_path = write_deploy_key(
                 r10k_repository_key, r10k_repository_key_owner, "r10k_deploy_key"
             )
+        # Ensure the deploy key is set in the ssh config
+        set_ssh_key_for_origin(r10k_repository_key_owner, deploy_key_path)
         # Configure r10k
         configure_r10k(r10k_repository, r10k_repo_name, deploy_key_path)
         # Keyscan our origin
@@ -1248,21 +1275,39 @@ The Puppetserver will be configured with the following settings:
         print_important("Performing first run of r10k, this may take some time...")
         deploy_environments()
         # Test that our bootstrap environment exists under /etc/puppetlabs/code/environments
-        if not os.path.exists(
-            f"/etc/puppetlabs/code/environments/{bootstrap_environment}"
-        ):
+        if not os.path.exists(bootstrap_environment_path):
             print_error(
                 f"Error: The bootstrap environment '{bootstrap_environment}' does not exist under /etc/puppetlabs/code/environments. Are you sure it's correct?"
             )
             sys.exit(1)
         # Test that our bootstrap Hiera file exists under /etc/puppetlabs/code/environments/{bootstrap_environment}
-        if not os.path.exists(
-            f"/etc/puppetlabs/code/environments/{bootstrap_environment}/{bootstrap_hiera}"
-        ):
+        if not os.path.exists(bootstrap_hiera_path):
             print_error(
                 f"Error: The bootstrap Hiera file '{bootstrap_hiera}' does not exist under /etc/puppetlabs/code/environments/{bootstrap_environment}. Are you sure it's correct?"
             )
             sys.exit(1)
+
+        # Finally apply
+        # TODO: Write some docs on this
+        if puppetserver_class:
+            apply_args = [
+                'apply',
+                f"--hiera_config={bootstrap_hiera_path}",
+                f"--modulepath={module_path}",
+                "-e",
+                f"include {puppetserver_class}",
+                '--detailed-exitcodes',
+            ]
+            try:
+                subprocess.run([args.puppet_agent_path] + apply_args, check=True)
+            except subprocess.CalledProcessError as e:
+                # Puppet may return a 0 or a 2 exit code, 2 means there were changes
+                if e.returncode == 2 or e.returncode == 0:
+                    print_important("Puppet bootstrap has completed successfully! :tada:")
+                # TODO: better error handling/message
+                else:
+                    print_error(f"Failed to apply the Puppetserver class. Error: {e}")
+                    sys.exit(1)
 
 
 if __name__ == "__main__":
