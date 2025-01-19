@@ -240,7 +240,7 @@ def install_package(package_name, package_version=None):
         if package_version:
             cmd = f"apt update && apt-get install -y {package_name}={package_version}"
         else:
-            cmd = f"apt-get install -y {package_name}"
+            cmd = f"apt update && apt-get install -y {package_name}"
     elif package_manager == "yum":
         if package_version:
             cmd = f"yum install -y {package_name}-{package_version}"
@@ -322,7 +322,7 @@ def get_response(prompt, response_type, mandatory=False):
             elif response in ["n", "no"]:
                 return False
             else:
-                print(f"Invalid response '{response}'")
+                print_error(f"Invalid response '{response}'")
                 response = None
 
     elif response_type == "string":
@@ -452,6 +452,19 @@ def set_hostname(new_hostname):
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to set hostname. Error: {e}")
         sys.exit(1)
+
+
+# Small function that prompts for a path on disk and checks if it exists
+# If it doesn't then it re-prompts the user
+# TODO: Get tab completion working for the path
+def prompt_for_path(prompt):
+    path = None
+    while not path:
+        path = get_response(prompt, "string", mandatory=True)
+        if not os.path.exists(path):
+            print_error(f"Error: The path {path} does not exist")
+            path = None
+    return path
 
 
 ### !!! REMOVE THIS SECTION WHEN TESTING IS COMPLETE !!!
@@ -592,15 +605,17 @@ def install_gem(gem_name, gem_version=None):
         print_error(f"Failed to install {gem_name}. Error: {e}")
         sys.exit(1)
 
+
 # Function to check if a gem is installed using the puppetserver gem command
 def check_gem_installed_puppetserver(puppetserver_path, gem_name):
     log.info(f"Checking if {gem_name} is installed")
-    cmd = f'{puppetserver_path} gem list -i {gem_name}'
+    cmd = f"{puppetserver_path} gem list -i {gem_name}"
     try:
         subprocess.run(cmd, shell=True, check=True)
         return True
     except subprocess.CalledProcessError:
         return False
+
 
 # Function to install a gem using the puppetserver gem command
 def install_gem_puppetserver(puppetserver_path, gem_name, gem_version=None):
@@ -770,9 +785,7 @@ def add_origin_to_known_hosts(owner, origin="github.com"):
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to scan github.com key.\n{e}")
 
-    known_hosts_file = (
-        f"/{owner}/.ssh/known_hosts"
-    )
+    known_hosts_file = f"/{owner}/.ssh/known_hosts"
 
     try:
         with open(known_hosts_file, "r") as file:
@@ -895,14 +908,24 @@ def main():
                 if private_repository_check:
                     r10k_repository_key_check = None
                     while r10k_repository_key_check is None:
+                        # NOTE: We require the deploy key to be on disk as reading multiple lines from the user is quite
+                        # difficult and error prone - this script is designed to be user friendly
                         r10k_repository_key_check = get_response(
-                            "Do you already have a deploy/ssh key for the repository?",
+                            "Do you already have a deploy/ssh key for the repository on disk?",
                             "bool",
                         )
                     if r10k_repository_key_check:
-                        r10k_repository_key = get_response(
-                            "Please enter the deploy/ssh key", "string", mandatory=True
+                        r10k_repository_key_path = prompt_for_path(
+                            "Please enter the path to the deploy/ssh key"
                         )
+                        try:
+                            with open(r10k_repository_key_path) as f:
+                                r10k_repository_key = f.read()
+                        except Exception as e:
+                            print_error(
+                                f"Error: Failed to read the deploy key at {r10k_repository_key_path}. Error: {e}"
+                            )
+                            sys.exit(1)
                     else:
                         # User does not currently have a key but will need one
                         # We'll generate one for them later
@@ -1009,12 +1032,20 @@ def main():
                     "Would you like to use eyaml encryption?", "bool"
                 )
             if eyaml_key_check:
-                eyaml_privatekey = get_response(
-                    "Please enter the eyaml private key", "string", mandatory=True
+                eyaml_privatekey_path = prompt_for_path(
+                    "Please enter the path to your eyaml PRIVATE key",
                 )
-                eyaml_publickey = get_response(
-                    "Please enter the eyaml public key", "string", mandatory=True
+                eyaml_publickey_path = prompt_for_path(
+                    "Please enter the path to your eyaml PUBLIC key",
                 )
+                try:
+                    with open(eyaml_privatekey_path) as f:
+                        eyaml_privatekey = f.read()
+                    with open(eyaml_publickey_path) as f:
+                        eyaml_publickey = f.read()
+                except Exception as e:
+                    print_error(f"Failed to read eyaml keys. Error: {e}")
+                    sys.exit(1)
             else:
                 eyaml_privatekey = None
                 eyaml_publickey = None
