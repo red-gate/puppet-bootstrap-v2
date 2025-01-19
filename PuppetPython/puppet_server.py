@@ -475,10 +475,14 @@ def parse_args():
         "-e",
         "--bootstrap-environment",
         help="The environment that the Puppet server should be bootstrapped from (e.g. production, development)",
+        # N.B: The default of 'production' is assumed in some logic below - be careful if changing this
+        default="production",
     )
     parser.add_argument(
         "--bootstrap-hiera",
         help="The name of the Hiera file to bootstrap the Puppet server with (path is relative to the root of your Puppet code repository)",
+        # N.B: The default of 'hiera.bootstrap.yaml' is assumed in some logic below - be careful if changing this
+        default="hiera.bootstrap.yaml",
     )
     parser.add_argument(
         "-c",
@@ -494,16 +498,18 @@ def parse_args():
         help="The new hostname to set for the server",
     )
     parser.add_argument(
-        "--github-repo",
-        help="The GitHub repository that contains your Puppet code/environment",
+        "--r10k-repository",
+        help="The repository to use for R10k",
     )
     parser.add_argument(
-        "--deploy-key",
-        help="The deploy key for the GitHub repository (if it's private)",
+        "--r10k-repository-key",
+        help="The deploy/ssh key for the repository (if it's private)",
     )
     parser.add_argument(
-        "--deploy-key-owner",
+        "--ssh-key-owner",
         help="The user on system who should own the deploy key",
+        # N.B: The default of 'root' is assumed in some logic below - be careful if changing this
+        default="root",
     )
     parser.add_argument(
         "--eyaml-privatekey",
@@ -767,7 +773,171 @@ def main():
     else:
         version = args.version
 
-    ### Check for any _optional_ information that and prompt if not provided ###
+    ### Check for any _optional_ information that and prompt if not provided (as long as we're not skipping the optional prompts) ###
+    # If the user hasn't supplied an r10k repository then check if they want to set one
+    if not args.r10k_repository:
+        if not args.skip_optional_prompts:
+            r10k_check = None
+            while r10k_check is None:
+                r10k_check = get_response("Would you like to use r10k?", "bool")
+            if r10k_check:
+                r10k_repository = get_response("Please enter the repository URI for the repo you wish to use with r10k", "string", mandatory=True)
+            else:
+                r10k_repository = None
+        else:
+            r10k_repository = None
+
+    # If the user does want to use r10k then we need to prompt for some additional information if not provided
+    if r10k_repository:
+        # The repository might need an ssh key if it's private, check with the user
+        if not args.r10k_repository_key:
+            if not args.skip_optional_prompts:
+                r10k_repository_key_check = None
+                while r10k_repository_key_check is None:
+                    r10k_repository_key_check = get_response("Do you have a deploy/ssh key for the repository?", "bool")
+                if r10k_repository_key_check:
+                    r10k_repository_key = get_response("Please enter the deploy/ssh key", "string", mandatory=True)
+                else:
+                    r10k_repository_key = None
+            else:
+                r10k_repository_key = None
+        else:
+            r10k_repository_key = args.r10k_repository_key
+        # If we've got a repository key then and the user hasn't supplied the owner then it will default to 'root'
+        # Check if the user wants to change this
+        if r10k_repository_key:
+            r10k_repository_key_owner = args.ssh_key_owner
+            if not args.skip_optional_prompts and r10k_repository_key_owner == "root":
+                r10k_repository_key_owner_check = None
+                while r10k_repository_key_owner_check is None:
+                    r10k_repository_key_owner_check = get_response("Currently the deploy key owner is set to 'root'. Would you like to change this?", "bool")
+                if r10k_repository_key_owner_check:
+                    r10k_repository_key_owner = get_response("Please enter the user who should own the deploy key", "string", mandatory=True)
+            else:
+                r10k_repository_key_owner = args.ssh_key_owner
+        else:
+            r10k_repository_key_owner = None
+        # If we're using r10k then the default bootstrap environment is 'production' but we can change this
+        # if the user wants to
+        bootstrap_environment = args.bootstrap_environment
+        if not args.skip_optional_prompts and bootstrap_environment == "production":
+            bootstrap_environment_check = None
+            while bootstrap_environment_check is None:
+                bootstrap_environment_check = get_response("The current bootstrap environment is 'production'. Would you like to change this?", "bool")
+            if bootstrap_environment_check:
+                bootstrap_environment = get_response("Please enter the environment to bootstrap from", "string", mandatory=True)
+        else:
+            bootstrap_environment = args.bootstrap_environment
+        # Similarly the default Hiera file is 'hiera.bootstrap.yaml' but we can change this
+        bootstrap_hiera = args.bootstrap_hiera
+        if not args.skip_optional_prompts and bootstrap_hiera == "hiera.bootstrap.yaml":
+            bootstrap_hiera_check = None
+            while bootstrap_hiera_check is None:
+                bootstrap_hiera_check = get_response("The current bootstrap Hiera file is 'hiera.bootstrap.yaml'. Would you like to change this?", "bool")
+            if bootstrap_hiera_check:
+                bootstrap_hiera = get_response("Please enter the Hiera file to bootstrap with", "string", mandatory=True)
+        else:
+            bootstrap_hiera = args.bootstrap_hiera
+        # If bootstrap_hiera is set we MUST have puppetserver_class set otherwise Puppet apply won't actually do anything
+        if bootstrap_hiera and not args.puppetserver_class:
+            puppetserver_class = get_response("Please enter the Puppet class to apply to the Puppet server (e.g. puppetserver)", "string", mandatory=True)
+        else:
+            puppetserver_class = args.puppetserver_class
+        # Finally attempt to work out the repository name from the URI
+        # e.g. "git@github.com:my-org/Puppet.git" should give "Puppet"
+        # If we fail then just set it to "control_repo"
+        try:
+            r10k_repo_name = r10k_repository.split("/")[-1].split(".")[0]
+        except Exception as e:
+            r10k_repo_name = "control_repo"
+        if not r10k_repo_name:
+            r10k_repo_name = "control_repo"
+        if args.r10k_version:
+            r10k_version = args.r10k_version
+        else:
+            r10k_version = None
+    else:
+        r10k_repository_key = None
+        r10k_repository_key_owner = None
+        bootstrap_environment = None
+        bootstrap_hiera = None
+        puppetserver_class = None
+        r10k_repo_name = None
+
+    # If the user hasn't supplied the eyaml keys then prompt for them
+    if not args.eyaml_privatekey and not args.eyaml_publickey:
+        if not args.skip_optional_prompts:
+            eyaml_key_check = None
+            while eyaml_key_check is None:
+                eyaml_key_check = get_response("Would you like to use eyaml encryption?", "bool")
+            if eyaml_key_check:
+                eyaml_privatekey = get_response("Please enter the eyaml private key", "string", mandatory=True)
+                eyaml_publickey = get_response("Please enter the eyaml public key", "string", mandatory=True)
+            else:
+                eyaml_privatekey = None
+                eyaml_publickey = None
+        else:
+            eyaml_privatekey = None
+            eyaml_publickey = None
+    else:
+        eyaml_privatekey = args.eyaml_privatekey
+        eyaml_publickey = args.eyaml_publickey
+
+    if eyaml_privatekey and eyaml_publickey:
+        eyaml_path = args.eyaml_key_path
+
+    # Check if the user wants to set any CSR extension attributes
+    if not args.csr_extensions:
+        if not args.skip_optional_prompts:
+            csr_extensions_check = None
+            while csr_extensions_check is None:
+                csr_extensions_check = get_response("Would you like to set any CSR extension attributes?", "bool")
+            if csr_extensions_check:
+                csr_extensions = get_csr_attributes()
+            else:
+                csr_extensions = None
+        else:
+            csr_extensions = None
+    else:
+        csr_extensions = args.csr_extensions
+
+    ### Ensure the user is happy before continuing with the bootstrap process ###
+    confirmation_message = f"""
+The Puppetserver will be configured with the following settings:
+
+    - Puppet version: {version}
+    - Hostname: {new_hostname}
+    - Domain name: {domain_name}
+"""
+    if r10k_repository:
+        confirmation_message += f"   - r10k: enabled\n"
+        if r10k_version:
+            confirmation_message += f"   - r10k version: {r10k_version}"
+        confirmation_message += f"   - r10k repository: {r10k_repository}"
+        if r10k_repository_key:
+            confirmation_message += f"   - r10k repository key: {r10k_repository_key}"
+        if r10k_repository_key_owner:
+            confirmation_message += f"   - r10k repository key owner: {r10k_repository_key_owner}"
+        if bootstrap_environment:
+            confirmation_message += f"   - Bootstrap environment: {bootstrap_environment}"
+        if bootstrap_hiera:
+            confirmation_message += f"   - Bootstrap Hiera file: {bootstrap_hiera}"
+        if puppetserver_class:
+            confirmation_message += f"   - Puppetserver class: {puppetserver_class}"
+    else:
+        confirmation_message += "   - r10k: disabled\n"
+    if eyaml_privatekey:
+        confirmation_message += "   - eyaml encryption: enabled\n"
+        if eyaml_path:
+            confirmation_message += f"   - eyaml key path: {eyaml_path}\n"
+    else:
+        confirmation_message += "   - eyaml encryption: disabled\n"
+    if csr_extensions:
+        confirmation_message += "   - CSR extension attributes:\n"
+        for key, value in csr_extensions.items():
+            confirmation_message += f"       - {key}: {value}\n"
+
+    print_important(confirmation_message)
 
 if __name__ == '__main__':
     main()
