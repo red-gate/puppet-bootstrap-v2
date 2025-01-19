@@ -106,7 +106,7 @@ def split_version(version):
 
 # This functions checks to see if the requested application is already installed
 # Unfortunately these tools often don't appear in the PATH so we need to query the package manager
-def check_installed(app):
+def check_puppet_app_installed(app):
     log.info(f"Checking if {app} is already installed")
     # Both Puppet Agent and Puppet Bolt has a - in the package name whereas Puppet Server does not :cry:
     if app == "agent" or app == "bolt":
@@ -510,10 +510,14 @@ def parse_args():
         help="The deploy/ssh key for the repository (if it's private)",
     )
     parser.add_argument(
-        "--ssh-key-owner",
+        "--r10k-repository-key-owner",
         help="The user on system who should own the deploy key",
         # N.B: The default of 'root' is assumed in some logic below - be careful if changing this
         default="root",
+    )
+    parser.add_argument(
+        "--r10k-version",
+        help="The version of R10k to install",
     )
     parser.add_argument(
         "--eyaml-privatekey",
@@ -522,10 +526,6 @@ def parse_args():
     parser.add_argument(
         "--eyaml-publickey",
         help="The public key for the eyaml encryption",
-    )
-    parser.add_argument(
-        "--r10k-version",
-        help="The version of R10k to install",
     )
     parser.add_argument(
         "--hiera-eyaml-version",
@@ -583,7 +583,7 @@ def check_gem_installed(gem_name):
 def install_gem(gem_name, gem_version=None):
     log.info(f"Installing {gem_name}")
     if gem_version:
-        cmd = f"gem install {gem_name} -v \"{gem_version}\""
+        cmd = f'gem install {gem_name} -v "{gem_version}"'
     else:
         cmd = f"gem install {gem_name}"
     try:
@@ -592,11 +592,12 @@ def install_gem(gem_name, gem_version=None):
         print_error(f"Failed to install {gem_name}. Error: {e}")
         sys.exit(1)
 
+
 # Function to install a gem using the puppetserver gem command
 def install_gem_puppetserver(puppetserver_path, gem_name, gem_version=None):
     log.info(f"Installing {gem_name}")
     if gem_version:
-        cmd = f"{puppetserver_path} gem install {gem_name} -v \"{gem_version}\""
+        cmd = f'{puppetserver_path} gem install {gem_name} -v "{gem_version}"'
     else:
         cmd = f"{puppetserver_path} gem install {gem_name}"
     try:
@@ -604,6 +605,7 @@ def install_gem_puppetserver(puppetserver_path, gem_name, gem_version=None):
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to install {gem_name}. Error: {e}")
         sys.exit(1)
+
 
 # Function to copy the eyaml keys to the correct location
 def copy_eyaml_keys(eyaml_privatekey, eyaml_publickey, eyaml_key_path):
@@ -659,11 +661,14 @@ def deploy_environments(r10k_path=None):
         print_error(f"Failed to deploy environments with r10k. Error: {e}")
         sys.exit(1)
 
+
 # Function to generate a deploy key (ssh key) for the GitHub repository
 def generate_deploy_key(deploy_key_owner, deploy_key_name):
     log.info("Generating a deploy key for the GitHub repository")
     deploy_key_path = f"/home/{deploy_key_owner}/.ssh/{deploy_key_name}"
-    print_important("A deploy key will now be generated for you to copy to your repository")
+    print_important(
+        "A deploy key will now be generated for you to copy to your repository"
+    )
     # If the key already exists then remove it
     if os.path.exists(deploy_key_path):
         print_important("An existing deploy key was found and will be removed")
@@ -674,36 +679,80 @@ def generate_deploy_key(deploy_key_owner, deploy_key_name):
             print_error(f"Failed to remove existing deploy key. Error: {e}")
             sys.exit(1)
     try:
-        subprocess.run(["ssh-keygen", "-t", "rsa", "-b", "4096", "-C", "r10k", "-f", deploy_key_path, "-N", ""], check=True)
-        # Ensure both keys are owned by the deploy key owner
-        subprocess.run(["chown", deploy_key_owner, deploy_key_path], check=True)
-        subprocess.run(["chown", f"{deploy_key_owner}.", deploy_key_path + ".pub"], check=True)
-        # Set the ACLs to 0600
-        subprocess.run(["chmod", "0600", deploy_key_path], check=True)
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-t",
+                "rsa",
+                "-b",
+                "4096",
+                "-C",
+                "r10k",
+                "-f",
+                deploy_key_path,
+                "-N",
+                "",
+            ],
+            check=True,
+        )
+        set_deploy_key_permissions(deploy_key_path, deploy_key_owner)
         # Get the contents of the public key to pass to the user
         with open(deploy_key_path + ".pub") as f:
             public_key = f.read()
-        print_important(f"Please copy the following deploy key to your repository:\n{public_key}")
+        print_important(
+            f"Please copy the following deploy key to your repository:\n{public_key}"
+        )
         print_important(f"Once you've copied the key press enter to continue")
         input()
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to generate deploy key. Error: {e}")
         sys.exit(1)
 
+# Function to write the deploy key to the correct location if the user is supplying one
+def write_deploy_key(private_deploy_key, public_deploy_key, deploy_key_owner, deploy_key_name):
+    log.info("Writing the deploy key to the correct location")
+    deploy_key_path = f"/home/{deploy_key_owner}/.ssh/{deploy_key_name}"
+    deploy_key_pub_path = f"{deploy_key_path}.pub"
+    try:
+        with open(deploy_key_path, "w") as f:
+            f.write(private_deploy_key)
+        with open(deploy_key_pub_path, "w") as f:
+            f.write(public_deploy_key)
+    except Exception as e:
+        print_error(f"Failed to write deploy key. Error: {e}")
+        sys.exit(1)
+    set_deploy_key_permissions(deploy_key_path, deploy_key_owner)
+
+# Function that sets the permissions on the deploy key
+def set_deploy_key_permissions(deploy_key_path, deploy_key_owner):
+    log.info("Setting the permissions on the deploy key")
+    try:
+        subprocess.run(["chown", deploy_key_owner, deploy_key_path], check=True)
+        subprocess.run(
+            ["chown", f"{deploy_key_owner}.", deploy_key_path + ".pub"], check=True
+        )
+        # Set the ACLs to 0600
+        subprocess.run(["chmod", "0600", deploy_key_path], check=True)
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to set deploy key permissions. Error: {e}")
+        sys.exit(1)
+
 # Function to add github.com to known hosts - this saves us getting prompted when we clone the repository
 # especially if we're running unattended!
 def add_github_to_known_hosts():
     log.info("Adding github.com to known hosts")
-    print('Adding github.com to known hosts')
+    print("Adding github.com to known hosts")
     try:
-        keyscan = subprocess.check_output(['ssh-keyscan', 'github.com']).decode('utf-8')
+        keyscan = subprocess.check_output(["ssh-keyscan", "github.com"]).decode("utf-8")
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to scan github.com key.\n{e}")
 
-    known_hosts_file = '/root/.ssh/known_hosts' # TODO: make this match the deploy key owner
+    known_hosts_file = (
+        "/root/.ssh/known_hosts"  # TODO: make this match the deploy key owner
+    )
 
     try:
-        with open(known_hosts_file, 'r') as file:
+        with open(known_hosts_file, "r") as file:
             known_hosts_content = file.read()
     except FileNotFoundError:
         known_hosts_content = None
@@ -711,17 +760,18 @@ def add_github_to_known_hosts():
     if known_hosts_content:
         if not re.search(re.escape(keyscan), known_hosts_content):
             try:
-                with open(known_hosts_file, 'a') as file:
+                with open(known_hosts_file, "a") as file:
                     file.write(keyscan)
             except Exception as e:
                 raise Exception(f"Failed to add github.com key.\n{e}")
     else:
         try:
             os.makedirs(os.path.dirname(known_hosts_file), exist_ok=True)
-            with open(known_hosts_file, 'w') as file:
+            with open(known_hosts_file, "w") as file:
                 file.write(keyscan)
         except Exception as e:
             raise Exception(f"Failed to create known_hosts file.\n{e}")
+
 
 def main():
     # Set up logging - by default only log errors
@@ -744,7 +794,9 @@ def main():
     if (args.eyaml_privatekey and not args.eyaml_publickey) or (
         args.eyaml_publickey and not args.eyaml_privatekey
     ):
-        print_error("Error: When supplying eyaml keys you _must_ supply both the eyaml private and public keys")
+        print_error(
+            "Error: When supplying eyaml keys you _must_ supply both the eyaml private and public keys"
+        )
         sys.exit(1)
 
     # Print out a welcome message
@@ -752,7 +804,9 @@ def main():
 
     ### Check for any information we absolute must have and prompt the user if not provided ###
     if not args.domain_name:
-        domain_name = get_response("Please enter the domain name (e.g. example.com)", "string", mandatory=True)
+        domain_name = get_response(
+            "Please enter the domain name (e.g. example.com)", "string", mandatory=True
+        )
     else:
         domain_name = args.domain_name
     # Strip the domain name of any leading dots
@@ -771,11 +825,21 @@ def main():
     # If we don't have a version then we'll need to prompt the user
     if not args.version:
         version_prompt = None
-        while not version_prompt or not re.match(r'^\d+(\.\d+)*$', version_prompt):
-            version_prompt = input('Enter the version of Puppetserver to install. Can be a major version (e.g. 7) or exact (e.g 7.1.2): ')
+        while not version_prompt or not re.match(r"^\d+(\.\d+)*$", version_prompt):
+            version_prompt = input(
+                "Enter the version of Puppetserver to install. Can be a major version (e.g. 7) or exact (e.g 7.1.2): "
+            )
         version = version_prompt
     else:
         version = args.version
+
+    # Split the version into major and exact versions
+    major_version, exact_version = split_version(version)
+    if exact_version:
+        message_version = exact_version
+    else:
+        message_version = f"{major_version} (latest available)"
+    log.info(f"Major version: {major_version}, Exact version: {exact_version}")
 
     ### Check for any _optional_ information that and prompt if not provided (as long as we're not skipping the optional prompts) ###
     # If the user hasn't supplied an r10k repository then check if they want to set one
@@ -785,7 +849,11 @@ def main():
             while r10k_check is None:
                 r10k_check = get_response("Would you like to use r10k?", "bool")
             if r10k_check:
-                r10k_repository = get_response("Please enter the repository URI for the repo you wish to use with r10k", "string", mandatory=True)
+                r10k_repository = get_response(
+                    "Please enter the repository URI for the repo you wish to use with r10k",
+                    "string",
+                    mandatory=True,
+                )
             else:
                 r10k_repository = None
         else:
@@ -798,9 +866,13 @@ def main():
             if not args.skip_optional_prompts:
                 r10k_repository_key_check = None
                 while r10k_repository_key_check is None:
-                    r10k_repository_key_check = get_response("Do you have a deploy/ssh key for the repository?", "bool")
+                    r10k_repository_key_check = get_response(
+                        "Do you have a deploy/ssh key for the repository?", "bool"
+                    )
                 if r10k_repository_key_check:
-                    r10k_repository_key = get_response("Please enter the deploy/ssh key", "string", mandatory=True)
+                    r10k_repository_key = get_response(
+                        "Please enter the deploy/ssh key", "string", mandatory=True
+                    )
                 else:
                     r10k_repository_key = None
             else:
@@ -810,15 +882,22 @@ def main():
         # If we've got a repository key then and the user hasn't supplied the owner then it will default to 'root'
         # Check if the user wants to change this
         if r10k_repository_key:
-            r10k_repository_key_owner = args.ssh_key_owner
+            r10k_repository_key_owner = args.r10k_repository_key_owner
             if not args.skip_optional_prompts and r10k_repository_key_owner == "root":
                 r10k_repository_key_owner_check = None
                 while r10k_repository_key_owner_check is None:
-                    r10k_repository_key_owner_check = get_response("Currently the deploy key owner is set to 'root'. Would you like to change this?", "bool")
+                    r10k_repository_key_owner_check = get_response(
+                        "Currently the deploy key owner is set to 'root'. Would you like to change this?",
+                        "bool",
+                    )
                 if r10k_repository_key_owner_check:
-                    r10k_repository_key_owner = get_response("Please enter the user who should own the deploy key", "string", mandatory=True)
+                    r10k_repository_key_owner = get_response(
+                        "Please enter the user who should own the deploy key",
+                        "string",
+                        mandatory=True,
+                    )
             else:
-                r10k_repository_key_owner = args.ssh_key_owner
+                r10k_repository_key_owner = args.r10k_repository_key_owner
         else:
             r10k_repository_key_owner = None
         # If we're using r10k then the default bootstrap environment is 'production' but we can change this
@@ -827,9 +906,16 @@ def main():
         if not args.skip_optional_prompts and bootstrap_environment == "production":
             bootstrap_environment_check = None
             while bootstrap_environment_check is None:
-                bootstrap_environment_check = get_response("The current bootstrap environment is 'production'. Would you like to change this?", "bool")
+                bootstrap_environment_check = get_response(
+                    "The current bootstrap environment is 'production'. Would you like to change this?",
+                    "bool",
+                )
             if bootstrap_environment_check:
-                bootstrap_environment = get_response("Please enter the environment to bootstrap from", "string", mandatory=True)
+                bootstrap_environment = get_response(
+                    "Please enter the environment to bootstrap from",
+                    "string",
+                    mandatory=True,
+                )
         else:
             bootstrap_environment = args.bootstrap_environment
         # Similarly the default Hiera file is 'hiera.bootstrap.yaml' but we can change this
@@ -837,14 +923,25 @@ def main():
         if not args.skip_optional_prompts and bootstrap_hiera == "hiera.bootstrap.yaml":
             bootstrap_hiera_check = None
             while bootstrap_hiera_check is None:
-                bootstrap_hiera_check = get_response("The current bootstrap Hiera file is 'hiera.bootstrap.yaml'. Would you like to change this?", "bool")
+                bootstrap_hiera_check = get_response(
+                    "The current bootstrap Hiera file is 'hiera.bootstrap.yaml'. Would you like to change this?",
+                    "bool",
+                )
             if bootstrap_hiera_check:
-                bootstrap_hiera = get_response("Please enter the Hiera file to bootstrap with", "string", mandatory=True)
+                bootstrap_hiera = get_response(
+                    "Please enter the Hiera file to bootstrap with",
+                    "string",
+                    mandatory=True,
+                )
         else:
             bootstrap_hiera = args.bootstrap_hiera
         # If bootstrap_hiera is set we MUST have puppetserver_class set otherwise Puppet apply won't actually do anything
         if bootstrap_hiera and not args.puppetserver_class:
-            puppetserver_class = get_response("Please enter the Puppet class to apply to the Puppet server (e.g. puppetserver)", "string", mandatory=True)
+            puppetserver_class = get_response(
+                "Please enter the Puppet class to apply to the Puppet server (e.g. puppetserver)",
+                "string",
+                mandatory=True,
+            )
         else:
             puppetserver_class = args.puppetserver_class
         # Finally attempt to work out the repository name from the URI
@@ -873,10 +970,16 @@ def main():
         if not args.skip_optional_prompts:
             eyaml_key_check = None
             while eyaml_key_check is None:
-                eyaml_key_check = get_response("Would you like to use eyaml encryption?", "bool")
+                eyaml_key_check = get_response(
+                    "Would you like to use eyaml encryption?", "bool"
+                )
             if eyaml_key_check:
-                eyaml_privatekey = get_response("Please enter the eyaml private key", "string", mandatory=True)
-                eyaml_publickey = get_response("Please enter the eyaml public key", "string", mandatory=True)
+                eyaml_privatekey = get_response(
+                    "Please enter the eyaml private key", "string", mandatory=True
+                )
+                eyaml_publickey = get_response(
+                    "Please enter the eyaml public key", "string", mandatory=True
+                )
             else:
                 eyaml_privatekey = None
                 eyaml_publickey = None
@@ -895,7 +998,9 @@ def main():
         if not args.skip_optional_prompts:
             csr_extensions_check = None
             while csr_extensions_check is None:
-                csr_extensions_check = get_response("Would you like to set any CSR extension attributes?", "bool")
+                csr_extensions_check = get_response(
+                    "Would you like to set any CSR extension attributes?", "bool"
+                )
             if csr_extensions_check:
                 csr_extensions = get_csr_attributes()
             else:
@@ -909,7 +1014,7 @@ def main():
     confirmation_message = f"""
 The Puppetserver will be configured with the following settings:
 
-    - Puppet version: {version}
+    - Puppet version: {message_version}
     - Hostname: {new_hostname}
     - Domain name: {domain_name}
 """
@@ -921,9 +1026,13 @@ The Puppetserver will be configured with the following settings:
         if r10k_repository_key:
             confirmation_message += f"    - r10k repository key: <redacted>\n"
         if r10k_repository_key_owner:
-            confirmation_message += f"    - r10k repository key owner: {r10k_repository_key_owner}\n"
+            confirmation_message += (
+                f"    - r10k repository key owner: {r10k_repository_key_owner}\n"
+            )
         if bootstrap_environment:
-            confirmation_message += f"    - Bootstrap environment: {bootstrap_environment}\n"
+            confirmation_message += (
+                f"    - Bootstrap environment: {bootstrap_environment}\n"
+            )
         if bootstrap_hiera:
             confirmation_message += f"    - Bootstrap Hiera file: {bootstrap_hiera}\n"
         if puppetserver_class:
@@ -953,5 +1062,48 @@ The Puppetserver will be configured with the following settings:
         # Even if the user has skipped the confirmation
         time.sleep(10)
 
-if __name__ == '__main__':
+    ### Start the bootstrap process ###
+    print_important("Starting the bootstrap process")
+
+    # Update the hostname if it's different
+    current_hostname = subprocess.check_output(["hostname"], text=True).strip()
+    if current_hostname != new_hostname:
+        set_hostname(new_hostname)
+        # On the Puppetserver we also need to update the /etc/hostnames file
+        # We'll just replace whatever is in there with the new hostname
+        try:
+            with open("/etc/hostname", "w") as f:
+                f.write(new_hostname)
+        except Exception as e:
+            print_error(f"Failed to write /etc/hostname. Error: {e}")
+            sys.exit(1)
+        # We also need to update the /etc/hosts file
+        try:
+            with open("/etc/hosts", "r") as f:
+                lines = f.readlines()
+            with open("/etc/hosts", "w") as f:
+                for line in lines:
+                    if current_hostname in line:
+                        f.write(line.replace(current_hostname, new_hostname))
+                    else:
+                        f.write(line)
+        except Exception as e:
+            print_error(f"Failed to write /etc/hosts. Error: {e}")
+            sys.exit(1)
+
+    # Install the Puppet server
+    if check_puppet_app_installed(app):
+        print_important("Puppet server is already installed, skipping installation")
+    else:
+        path = download_puppet_package_archive(app, major_version)
+        install_package_archive(app, path)
+        install_puppet_app(app, exact_version)
+
+    # Install and configure r10k if we're using it
+    if r10k_repository:
+        if not check_gem_installed("r10k"):
+            install_gem("r10k", r10k_version)
+
+
+if __name__ == "__main__":
     main()
