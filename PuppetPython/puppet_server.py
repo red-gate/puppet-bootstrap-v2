@@ -25,16 +25,16 @@ puppet_bin = "/opt/puppetlabs/bin/puppet"
 def print_error(message):
     print("\033[91m" + message + "\033[0m")
 
-
+# Function to print important messages in yellow
 def print_important(message):
     print("\033[93m" + message + "\033[0m")
 
 
 # Function to print a welcome message
-def print_welcome():
+def print_welcome(app):
     message = f"""
-    Welcome to the Puppet Agent bootstrap script!
-    This script will help you install and configure Puppet Agent on your system.
+    Welcome to the Puppet {app} bootstrap script!
+    This script will help you install and configure Puppet {app} on your system.
     You will be prompted for any information needed to begin the bootstrap process.
     Please refer to the README for more information on how to use this script.
     """
@@ -66,6 +66,7 @@ def get_os_id():
 
 # Function to check if the OS is supported
 def check_supported_os():
+    global os_id
     log.info("Checking if the OS is supported")
     supported_os = ["ubuntu", "debian", "centos", "rhel"]
     if os_id.lower() not in supported_os:
@@ -112,7 +113,6 @@ def check_puppet_app_installed(app):
     if app == "agent" or app == "bolt":
         app = f"-{app}"
     app_name = f"puppet{app}"
-    # I'm not sure if this is the best way to check for the package manager or not
     if os.path.exists("/usr/bin/apt"):
         cmd = f"dpkg -l | grep {app_name}"
     elif os.path.exists("/usr/bin/yum"):
@@ -219,6 +219,7 @@ def check_package_manager():
 def check_package_installed(package_name):
     log.info(f"Checking if {package_name} is already installed")
     if package_manager == "apt":
+        # TODO: Find a better way to do this, it returns way more than just the package we're looking for
         cmd = f"dpkg -l | grep {package_name}"
     elif package_manager == "yum":
         cmd = f"rpm -qa | grep {package_name}"
@@ -310,7 +311,7 @@ def set_certificate_extensions(extension_attributes):
         raise Exception(f"Failed to write CSR extension attributes: {e}")
 
 
-# This function is used to get a response from the user
+# This function is used to get a response from the user and ensure that the response is valid
 def get_response(prompt, response_type, mandatory=False):
     response = None
 
@@ -410,10 +411,6 @@ def set_puppet_config_option(config_options, config_file_path=None, section="age
             raise Exception(
                 f"Failed to set the configuration option {key} = {value}: {result.stderr}"
             )
-
-
-# Example usage:
-# set_puppet_config_option({"server": "puppet.example.com", "environment": "production"}, section="agent")
 
 
 # Function to enable the puppet service
@@ -651,6 +648,7 @@ def copy_eyaml_keys(eyaml_privatekey, eyaml_publickey, eyaml_key_path):
     except Exception as e:
         print_error(f"Failed to write eyaml keys. Error: {e}")
         sys.exit(1)
+    return [eyaml_privatekey_path, eyaml_publickey_path]
 
 
 # Function to configure r10k
@@ -792,8 +790,8 @@ def set_deploy_key_permissions(deploy_key_path, deploy_key_owner):
         sys.exit(1)
 
 
-# Function to add the origin source control to known hosts - this saves us getting prompted when we clone the repository
-# especially if we're running unattended!
+# Function to add the origin source control to known hosts - this is needed when using r10k with the shellgit provider
+# as it can't handle the prompt to add the keys and will fail with a 128 exit code
 # We technically support setting the origin to something other than github.com but we don't currently ask for it
 def add_origin_to_known_hosts(owner, origin="github.com"):
     log.info(f"Adding {origin} to known hosts")
@@ -830,6 +828,8 @@ def add_origin_to_known_hosts(owner, origin="github.com"):
             raise Exception(f"Failed to create known_hosts file.\n{e}")
 
 # Function to set ssh key for the origin in .ssh/config
+# This is needed when using r10k with the shellgit provider
+# as by default it will only look for the key in the default location
 def set_ssh_key_for_origin(owner, deploy_key_path, origin="github.com"):
     log.info(f"Setting ssh key for {origin} in .ssh/config")
     print(f"Setting ssh key for {origin} in .ssh/config")
@@ -873,8 +873,11 @@ def main():
         )
         sys.exit(1)
 
+    # Get the current hostname
+    current_hostname = subprocess.check_output(["hostname"], text=True).strip()
+
     # Print out a welcome message
-    print_welcome()
+    print_welcome(app)
 
     ### Check for any information we absolute must have and prompt the user if not provided ###
     if not args.domain_name:
@@ -887,8 +890,10 @@ def main():
     domain_name = domain_name.lstrip(".")
 
     # Check if the user wants to change the hostname if none is provided
-    if not args.new_hostname:
+    if not args.new_hostname and not args.skip_optional_prompts:
         new_hostname = check_hostname_change()
+    elif not args.new_hostname and args.skip_optional_prompts:
+        new_hostname = current_hostname
     else:
         new_hostname = args.new_hostname
 
@@ -964,6 +969,7 @@ def main():
                                 f"Error: Failed to read the deploy key at {r10k_repository_key_path}. Error: {e}"
                             )
                             sys.exit(1)
+                        generate_r10k_key = False
                     else:
                         # User does not currently have a key but will need one
                         # We'll generate one for them later
@@ -1191,8 +1197,8 @@ The Puppetserver will be configured with the following settings:
     print_important("Starting the bootstrap process")
 
     # Update the hostname if it's different
-    current_hostname = subprocess.check_output(["hostname"], text=True).strip()
     if current_hostname != new_hostname:
+        print_important(f"Setting the hostname to {new_hostname}")
         set_hostname(new_hostname)
         # On the Puppetserver we also need to update the /etc/hostnames file
         # We'll just replace whatever is in there with the new hostname
@@ -1220,6 +1226,7 @@ The Puppetserver will be configured with the following settings:
     if check_puppet_app_installed(app):
         print_important("Puppet server is already installed, skipping installation")
     else:
+        print_important(f"Installing Puppet server")
         path = download_puppet_package_archive(app, major_version)
         install_package_archive(app, path)
         install_puppet_app(app, exact_version)
@@ -1231,6 +1238,7 @@ The Puppetserver will be configured with the following settings:
 
     # If using hiera-eyaml then install it as both a regular gem and a puppetserver gem
     if eyaml_privatekey:
+        print_important("Configuring hiera-eyaml")
         if not check_gem_installed("hiera-eyaml"):
             install_gem("hiera-eyaml", args.hiera_eyaml_version)
         if not check_gem_installed_puppetserver(args.puppetserver_path, "hiera-eyaml"):
@@ -1238,7 +1246,7 @@ The Puppetserver will be configured with the following settings:
                 args.puppetserver_path, "hiera-eyaml", args.hiera_eyaml_version
             )
         # Copy the eyaml keys to the correct location
-        copy_eyaml_keys(eyaml_privatekey, eyaml_publickey, eyaml_path)
+        eyaml_key_locations = copy_eyaml_keys(eyaml_privatekey, eyaml_publickey, eyaml_path)
 
     # If we've got a bootstrap environment then ensure it's set in the puppet.conf
     if bootstrap_environment:
@@ -1252,6 +1260,7 @@ The Puppetserver will be configured with the following settings:
 
     # Install and configure r10k if we're using it
     if r10k_repository:
+        print_important("Configuring r10k")
         bootstrap_environment_path = f"/etc/puppetlabs/code/environments/{bootstrap_environment}"
         bootstrap_hiera_path = f"{bootstrap_environment_path}/{bootstrap_hiera}"
         module_path = f"{bootstrap_environment_path}/modules:{bootstrap_environment_path}/ext-modules"
@@ -1292,8 +1301,10 @@ The Puppetserver will be configured with the following settings:
             sys.exit(1)
 
         # Finally apply
-        # TODO: Write some docs on this
+        # We only do this if we have a puppetserver class to apply, if the user is building a custom environment
+        # then they'll need to sort out the configuration of Puppet themselves
         if puppetserver_class:
+            print_important(f"Applying the {puppetserver_class} class")
             apply_args = [
                 'apply',
                 f"--hiera_config={bootstrap_hiera_path}",
@@ -1307,12 +1318,32 @@ The Puppetserver will be configured with the following settings:
             except subprocess.CalledProcessError as e:
                 # Puppet may return a 0 or a 2 exit code, 2 means there were changes
                 if e.returncode == 2 or e.returncode == 0:
-                    print_important("Puppet bootstrap has completed successfully! :tada:")
-                # TODO: better error handling/message
+                    print_important("Puppetserver class applied successfully! :tada:")
+                    # We should be safe to enable the Puppet service now
+                    enable_puppet_service()
+                    failed_run = False
                 else:
+                    failed_run = True
                     print_error(f"Failed to apply the Puppetserver class. Error: {e}")
-                    sys.exit(1)
 
+    # If we've got this far then we're done
+    final_message = f"Puppet bootstrap process complete!\n"
+    if failed_run:
+        final_message += f"Unfortunately the apply of the \"{puppetserver_class}\" was unsuccessful.\n"
+        final_message += f"You'll need to check for any errors and correct them before proceeding further.\n"
+    else:
+        final_message += f"Puppet should now take over and start managing this node.\n"
+    # If the user passed in any keys we should let them know that they should delete the originals
+    if r10k_repository_key and not generate_r10k_key:
+        if r10k_repository_key_path != deploy_key_path:
+            final_message += f"The deploy key you provided at \"{r10k_repository_key_path}\" has been copied to the correct location, you can now safely delete the original if no longer needed.\n"
+    if eyaml_privatekey:
+        if eyaml_privatekey_path != eyaml_key_locations[0]:
+            final_message += f"The eyaml private key you provided at \"{eyaml_privatekey_path}\" has been copied to the correct location, you can now safely delete the originals if no longer needed.\n"
+        if eyaml_publickey_path != eyaml_key_locations[1]:
+            final_message += f"The eyaml public key you provided at \"{eyaml_publickey_path}\" has been copied to the correct location, you can now safely delete the originals if no longer needed.\n"
+    # Print the last message and say goodbye
+    print_important(final_message)
 
 if __name__ == "__main__":
     main()
