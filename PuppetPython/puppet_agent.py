@@ -10,6 +10,7 @@ import argparse
 from urllib.request import urlretrieve
 import re
 import time
+import json
 
 ### !!! REMOVE THIS SECTION WHEN TESTING IS COMPLETE !!!
 # Global variables to save having to set them multiple times
@@ -19,22 +20,26 @@ os_version = None
 # Puppet doesn't put itself on the PATH so we need to specify the full path
 puppet_bin = "/opt/puppetlabs/bin/puppet"
 
+
 # Function to print error messages in red
 def print_error(message):
-    print('\033[91m' + message + '\033[0m')
+    print("\033[91m" + message + "\033[0m")
 
+# Function to print important messages in yellow
 def print_important(message):
-    print('\033[93m' + message + '\033[0m')
+    print("\033[93m" + message + "\033[0m")
+
 
 # Function to print a welcome message
-def print_welcome():
-    message =f"""
-    Welcome to the Puppet Agent bootstrap script!
-    This script will help you install and configure Puppet Agent on your system.
+def print_welcome(app):
+    message = f"""
+    Welcome to the Puppet {app} bootstrap script!
+    This script will help you install and configure Puppet {app} on your system.
     You will be prompted for any information needed to begin the bootstrap process.
     Please refer to the README for more information on how to use this script.
     """
     print(message)
+
 
 # Ensure the script is run as root
 def check_root():
@@ -61,6 +66,7 @@ def get_os_id():
 
 # Function to check if the OS is supported
 def check_supported_os():
+    global os_id
     log.info("Checking if the OS is supported")
     supported_os = ["ubuntu", "debian", "centos", "rhel"]
     if os_id.lower() not in supported_os:
@@ -98,18 +104,18 @@ def split_version(version):
         exact_version = None
     return major_version, exact_version
 
+
 # This functions checks to see if the requested application is already installed
 # Unfortunately these tools often don't appear in the PATH so we need to query the package manager
-def check_installed(app):
+def check_puppet_app_installed(app):
     log.info(f"Checking if {app} is already installed")
     # Both Puppet Agent and Puppet Bolt has a - in the package name whereas Puppet Server does not :cry:
-    if app == 'agent' or app == 'bolt':
+    if app == "agent" or app == "bolt":
         app = f"-{app}"
     app_name = f"puppet{app}"
-    # I'm not sure if this is the best way to check for the package manager or not
-    if os.path.exists('/usr/bin/apt'):
+    if os.path.exists("/usr/bin/apt"):
         cmd = f"dpkg -l | grep {app_name}"
-    elif os.path.exists('/usr/bin/yum'):
+    elif os.path.exists("/usr/bin/yum"):
         cmd = f"rpm -qa | grep {app_name}"
     else:
         print("Error: No supported package manager found")
@@ -121,27 +127,32 @@ def check_installed(app):
     except subprocess.CalledProcessError:
         return False
 
+
 # Function to download the relevant rpm/deb package to /tmp
 def download_puppet_package_archive(app, major_version):
     log.info(f"Downloading {app} package")
-    if package_manager == 'apt':
+    if package_manager == "apt":
         # Both puppet-agent and puppetserver use the same deb package whereas puppet-bolt uses a different one
-        if app == 'agent' or app == 'server':
-            url = f"https://apt.puppet.com/puppet{major_version}-release-{os_version}.deb"
-        elif app == 'bolt':
+        if app == "agent" or app == "server":
+            url = (
+                f"https://apt.puppet.com/puppet{major_version}-release-{os_version}.deb"
+            )
+        elif app == "bolt":
             url = f"https://apt.puppet.com/puppet-tools-release-{os_version}.deb"
-    elif package_manager == 'yum':
+    elif package_manager == "yum":
         # Again puppet-agent and puppetserver use the same rpm package whereas puppet-bolt uses a different one
-        if app == 'agent' or app == 'server':
+        if app == "agent" or app == "server":
             url = f"https://yum.puppetlabs.com/puppet{major_version}-release-el-{os_version}.noarch.rpm"
-        elif app == 'bolt':
+        elif app == "bolt":
             url = f"https://yum.puppet.com/puppet-tools-release-el-{os_version}.noarch.rpm"
     else:
         print("Error: No supported package manager found")
         sys.exit(1)
     try:
         log.info(f"Downloading {app} package from {url}")
-        path, headers = urlretrieve(url, f"/tmp/puppet-{app}-release-{major_version}.deb")
+        path, headers = urlretrieve(
+            url, f"/tmp/puppet-{app}-release-{major_version}.deb"
+        )
         return path
     except Exception as e:
         if headers:
@@ -149,12 +160,13 @@ def download_puppet_package_archive(app, major_version):
         print(f"Error: {e}")
         sys.exit(1)
 
+
 # Function to install the downloaded package
 def install_package_archive(app, path):
     log.info(f"Installing {app} package archive")
-    if package_manager == 'apt':
+    if package_manager == "apt":
         cmd = f"dpkg -i {path}"
-    elif package_manager == 'yum':
+    elif package_manager == "yum":
         cmd = f"rpm -i {path}"
     else:
         print("Error: No supported package manager found")
@@ -165,21 +177,22 @@ def install_package_archive(app, path):
         print(f"Error: {e}")
         sys.exit(1)
 
+
 # Function to install the given application
 # If the version parameter is passed in then install that specific version
 # Otherwise install the latest version
 def install_puppet_app(app, version):
     log.info(f"Installing {app}")
     # Both Puppet Agent and Puppet Bolt has a - in the package name whereas Puppet Server does not :cry:
-    if app == 'agent' or app == 'bolt':
+    if app == "agent" or app == "bolt":
         app = f"-{app}"
-    if package_manager == 'apt':
+    if package_manager == "apt":
         if version:
             complete_version = f"{version}-1{os_version}"
             install_package(f"puppet{app}", complete_version)
         else:
             install_package(f"puppet{app}")
-    elif package_manager == 'yum':
+    elif package_manager == "yum":
         if version:
             install_package(f"puppet{app}", version)
         else:
@@ -206,6 +219,7 @@ def check_package_manager():
 def check_package_installed(package_name):
     log.info(f"Checking if {package_name} is already installed")
     if package_manager == "apt":
+        # TODO: Find a better way to do this, it returns way more than just the package we're looking for
         cmd = f"dpkg -l | grep {package_name}"
     elif package_manager == "yum":
         cmd = f"rpm -qa | grep {package_name}"
@@ -227,7 +241,7 @@ def install_package(package_name, package_version=None):
         if package_version:
             cmd = f"apt update && apt-get install -y {package_name}={package_version}"
         else:
-            cmd = f"apt-get install -y {package_name}"
+            cmd = f"apt update && apt-get install -y {package_name}"
     elif package_manager == "yum":
         if package_version:
             cmd = f"yum install -y {package_name}-{package_version}"
@@ -297,7 +311,7 @@ def set_certificate_extensions(extension_attributes):
         raise Exception(f"Failed to write CSR extension attributes: {e}")
 
 
-# This function is used to get a response from the user
+# This function is used to get a response from the user and ensure that the response is valid
 def get_response(prompt, response_type, mandatory=False):
     response = None
 
@@ -309,7 +323,7 @@ def get_response(prompt, response_type, mandatory=False):
             elif response in ["n", "no"]:
                 return False
             else:
-                print(f"Invalid response '{response}'")
+                print_error(f"Invalid response '{response}'")
                 response = None
 
     elif response_type == "string":
@@ -398,8 +412,6 @@ def set_puppet_config_option(config_options, config_file_path=None, section="age
                 f"Failed to set the configuration option {key} = {value}: {result.stderr}"
             )
 
-# Example usage:
-# set_puppet_config_option({"server": "puppet.example.com", "environment": "production"}, section="agent")
 
 # Function to enable the puppet service
 def enable_puppet_service():
@@ -409,6 +421,7 @@ def enable_puppet_service():
     except subprocess.CalledProcessError as e:
         print(f"Error: {e}")
         sys.exit(1)
+
 
 # Function to check if the user wants to change the hostname
 def check_hostname_change():
@@ -420,10 +433,13 @@ def check_hostname_change():
     print_important(f"Current hostname: {current_hostname}")
     change_hostname = get_response("Would you like to change the hostname?", "bool")
     if change_hostname:
-        new_hostname = get_response("Please enter the new hostname to set", "string", mandatory=True)
+        new_hostname = get_response(
+            "Please enter the new hostname to set", "string", mandatory=True
+        )
         return new_hostname
     else:
         return current_hostname
+
 
 # Function to change the hostname of the system
 def set_hostname(new_hostname):
@@ -433,6 +449,21 @@ def set_hostname(new_hostname):
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to set hostname. Error: {e}")
         sys.exit(1)
+
+
+# Small function that prompts for a path on disk and checks if it exists
+# If it doesn't then it re-prompts the user
+# TODO: Get tab completion working for the path
+def prompt_for_path(prompt):
+    path = None
+    while not path:
+        path = get_response(prompt, "string", mandatory=True)
+        if not os.path.exists(path):
+            print_error(f"Error: The path {path} does not exist")
+            path = None
+    return path
+
+
 ### !!! REMOVE THIS SECTION WHEN TESTING IS COMPLETE !!!
 
 # Function to parse the command line arguments
@@ -440,10 +471,10 @@ def parse_args():
     # TODO: set types for the arguments
     parser = argparse.ArgumentParser(description="Install Puppet Agent on Linux")
     parser.add_argument("-v", "--agent-version", help="The version of Puppet agent to install can be just the major version (e.g. '7') or the full version number (e.g. '7.12.0')")
-    parser.add_argument("-s", "--puppet-server", help="The Puppet server to connect to", required=True)
+    parser.add_argument("-s", "--puppet-server", help="The Puppet server to connect to")
     parser.add_argument("-e", "--environment", help="The Puppet environment to use", default='production')
-    parser.add_argument("-c", "--csr-extensions", help="The CSR extension attributes to use")
-    parser.add_argument("-d", "--domain-name", help="Your domain name", required=True)
+    parser.add_argument("-c", "--csr-extensions", help="The CSR extension attributes to use", type=json.loads)
+    parser.add_argument("-d", "--domain-name", help="Your domain name")
     parser.add_argument("--puppet-port", help="The port the Puppet server is listening on", default='8140')
     parser.add_argument("--certname", help="The certificate name to use")
     parser.add_argument("--enable-service", help="Enable the Puppet service", default=True)
@@ -475,12 +506,25 @@ def main():
     args = parse_args()
 
     # Print out a welcome message
-    print_welcome()
-
-    # Strip the domain name of any leading periods
-    domain_name = args.domain_name.lstrip(".")
+    print_welcome(app)
 
     ### Check we have all the _required_ information to proceed ###
+    # We'll need to know the FQDN of the Puppet server
+    if not args.puppet_server:
+        puppet_server = None
+        while not puppet_server:
+            puppet_server = input("Please enter the FQDN of the Puppet server: ")
+    else:
+        puppet_server = args.puppet_server
+    # We need to know the domain name of the system
+    if not args.domain_name:
+        domain_name = None
+        while not domain_name:
+            domain_name = input("Please enter the domain name for this node: ")
+    else:
+        domain_name = args.domain_name
+    # Strip the domain name of any leading periods
+    domain_name = domain_name.lstrip(".")
     # If we don't have a version then we'll need to prompt the user
     if not args.agent_version:
         version_prompt = None
@@ -499,17 +543,17 @@ def main():
     log.info(f"Major version: {major_version}, Exact version: {exact_version}")
 
     # Ensure the Puppet server has the domain appended to it
-    if not args.puppet_server.endswith(domain_name):
-        puppet_server = f"{args.puppet_server}.{domain_name}"
+    if not puppet_server.endswith(domain_name):
+        puppet_server = f"{puppet_server}.{domain_name}"
     else:
-        puppet_server = args.puppet_server
+        puppet_server = puppet_server
 
     # Check if we can ping the Puppet server, if not then raise an error and exit
     # This helps us avoid half configuring a system and failing at the end
     # If --skip-puppetserver-check is set then we'll skip this check
     if args.skip_puppetserver_check:
         try:
-            subprocess.run(["ping", "-c", "4", puppet_server], check=True)
+            subprocess.run(["ping", "-c", "4", puppet_server], check=True, stdout=subprocess.DEVNULL)
         except subprocess.CalledProcessError as e:
             print(f"Error: Could not ping the Puppet server at {puppet_server}. Are you sure it's correct?")
             sys.exit(1)
@@ -585,6 +629,7 @@ Puppet will be installed and configured with the following settings:
     # Set the hostname
     # We do this first so we can ensure the certname is set correctly
     if new_hostname != current_hostname:
+        print_important(f"Setting the hostname to {new_hostname}")
         set_hostname(new_hostname)
         # To ensure we get the correct certname we'll set the certname to the new hostname
         # unless the user has specified a custom certname
@@ -597,11 +642,12 @@ Puppet will be installed and configured with the following settings:
     # if this leads to unforeseen consequences then we can change this behaviour
     # TODO: Fail on version mismatch?
     # TODO: Uninstall and reinstall?
-    if check_installed(app):
+    if check_puppet_app_installed(app):
         log.info(f"{app} is already installed")
         print(f"{app} is already installed - skipping installation")
     else:
         log.info(f"{app} is not installed")
+        print_important(f"Installing Puppet...")
         path = download_puppet_package_archive(app, major_version)
         install_package_archive(app, path)
         install_puppet_app(app, exact_version)
@@ -642,7 +688,7 @@ Puppet will be installed and configured with the following settings:
                 first_run = True
             else:
                 # If we fail then we'll just log the error and continue with the bootstrap process
-                print_important(f"The initial run of Puppet has failed :(\nThe bootstrap process will continue.\nError: {e}")
+                print_error(f"The initial run of Puppet has failed :(\nThe bootstrap process will continue.\nError: {e}")
                 first_run = False
 
     # Enable the Puppet service if the user has requested it
@@ -655,6 +701,8 @@ Puppet will be installed and configured with the following settings:
         final_message += "The initial Puppet run has completed successfully and Puppet should now be managing this node\n"
     else:
         final_message += "The initial Puppet run has failed :cry: this node is still being managed by Puppet but you'll need to investigate the failure.\n"
+
+    print_important(final_message)
 
 if __name__ == '__main__':
     main()
