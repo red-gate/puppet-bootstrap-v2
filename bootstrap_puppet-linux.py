@@ -793,7 +793,7 @@ Puppet will be installed and configured with the following settings:
 
     # Trigger the initial Puppet run if the user hasn't skipped it
     # Puppet will exit with 2 if there are changes to be applied so we'll ignore that
-    if args.skip_initial_run:
+    if not args.skip_initial_run:
         print_important("Performing first Puppet run...")
         puppet_args = [puppet_bin, "agent", "--test", "--detailed-exitcodes"]
         if args.wait_for_cert > 0:
@@ -814,6 +814,8 @@ Puppet will be installed and configured with the following settings:
                     f"The initial run of Puppet has failed :(\nThe bootstrap process will continue.\nError: {e}"
                 )
                 first_run = False
+    else:
+        first_run = False
 
     # Enable the Puppet service if the user has requested it
     if args.enable_service:
