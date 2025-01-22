@@ -19,8 +19,8 @@ $CommonInsertString = '### !!! Common Functions !!! ###'
 # Ensure we can load each of the files.
 try
 {
-    $ServerBootstrapScriptContent = Get-Content -Path $ServerBootstrapScript -ErrorAction Stop
-    $AgentBootstrapScriptContent = Get-Content -Path $AgentBootstrapScript -ErrorAction Stop
+    $ServerBootstrapScriptContent = Get-Content -Path $ServerBootstrapScript -Raw -ErrorAction Stop
+    $AgentBootstrapScriptContent = Get-Content -Path $AgentBootstrapScript -Raw -ErrorAction Stop
     $CommonFileContent = Get-Content -Path $CommonFile -ErrorAction Stop
 }
 catch
@@ -38,6 +38,10 @@ Write-Debug "Common Section: $CommonSection"
 # Insert the common section into the server and agent scripts.
 $ServerBootstrapScriptContent = $ServerBootstrapScriptContent -replace $CommonInsertString, $CommonSection
 $AgentBootstrapScriptContent = $AgentBootstrapScriptContent -replace $CommonInsertString, $CommonSection
+
+# Ensure line endings are set LF.
+$ServerBootstrapScriptContent = $ServerBootstrapScriptContent -replace "`r`n", "`n"
+$AgentBootstrapScriptContent = $AgentBootstrapScriptContent -replace "`r`n", "`n"
 
 # Write the updated content back to the files.
 try
