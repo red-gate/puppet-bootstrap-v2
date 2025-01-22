@@ -470,5 +470,4 @@ def prompt_for_path(prompt):
             path = None
     return path
 
-
 ### !!! End Common Functions !!!
