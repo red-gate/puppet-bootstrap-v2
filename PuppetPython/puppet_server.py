@@ -29,6 +29,9 @@ def print_error(message):
 def print_important(message):
     print("\033[93m" + message + "\033[0m")
 
+# Function to print success messages in green
+def print_success(message):
+    print("\033[92m" + message + "\033[0m")
 
 # Function to print a welcome message
 def print_welcome(app):
@@ -1275,9 +1278,12 @@ The Puppetserver will be configured with the following settings:
             deploy_key_path = write_deploy_key(
                 r10k_repository_key, r10k_repository_key_owner, "r10k_deploy_key"
             )
-        # When using shellgit as the provider for r10k (the default) we need to set the ssh key in .ssh/config
-        # Otherwise ssh doesn't know where to find the key and r10k will fail with a 128 error
-        set_ssh_key_for_origin(r10k_repository_key_owner, deploy_key_path)
+        else:
+            deploy_key_path = None
+        if deploy_key_path:
+            # When using shellgit as the provider for r10k (the default) we need to set the ssh key in .ssh/config
+            # Otherwise ssh doesn't know where to find the key and r10k will fail with a 128 error
+            set_ssh_key_for_origin(r10k_repository_key_owner, deploy_key_path)
         # Configure r10k
         configure_r10k(r10k_repository, r10k_repo_name, deploy_key_path)
         # Keyscan our origin
@@ -1343,7 +1349,10 @@ The Puppetserver will be configured with the following settings:
         if eyaml_publickey_path != eyaml_key_locations[1]:
             final_message += f"The eyaml public key you provided at \"{eyaml_publickey_path}\" has been copied to the correct location, you can now safely delete the originals if no longer needed.\n"
     # Print the last message and say goodbye
-    print_important(final_message)
+    if failed_run:
+        print_important(final_message)
+    else:
+        print_success(final_message)
 
 if __name__ == "__main__":
     main()
