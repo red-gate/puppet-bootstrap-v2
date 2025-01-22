@@ -60,13 +60,13 @@ def parse_args():
         action="store_false",
     )
     parser.add_argument(
-        "--skip-confirmation", help="Skip the confirmation prompt", action="store_false"
+        "--skip-confirmation", help="Skip the confirmation prompt", action="store_true"
     )
     parser.add_argument(
-        "--skip-optional-prompts", help="Skip optional prompts", action="store_false"
+        "--skip-optional-prompts", help="Skip optional prompts", action="store_true"
     )
     parser.add_argument(
-        "--skip-initial-run", help="Skip the initial Puppet run", action="store_false"
+        "--skip-initial-run", help="Skip the initial Puppet run", action="store_true"
     )
     parser.add_argument(
         "--unattended", help="Run the script in unattended mode", action="store_true"
@@ -185,7 +185,7 @@ def main():
     # Check if we can ping the Puppet server, if not then raise an error and exit
     # This helps us avoid half configuring a system and failing at the end
     # If --skip-puppetserver-check is set then we'll skip this check
-    if skip_ping_check:
+    if not skip_ping_check:
         try:
             subprocess.run(
                 ["ping", "-c", "4", puppet_server],
@@ -201,24 +201,24 @@ def main():
     current_hostname = subprocess.check_output(["hostname"], text=True).strip()
     new_hostname = current_hostname
 
-    # Prompt the user for any _optional_ information
-    # If --skip-optional-prompts is set then we'll skip this section
-    if skip_prompts:
-        # If the environment is set to the default of production then check if the user wants to change it
-        if args.environment == "production":
-            print_important(
-                "This machine will be bootstrapped from the 'production' environment"
+    # If the environment is set to the default of production then check if the user wants to change it
+    if args.environment == "production" and not skip_prompts:
+        print_important(
+            "This machine will be bootstrapped from the 'production' environment"
+        )
+        environment_check = get_response(
+            "Would you like to set a different environment?", "bool"
+        )
+        if environment_check:
+            environment = get_response(
+                "Please enter the environment to use", "string", mandatory=True
             )
-            environment_check = get_response(
-                "Would you like to set a different environment?", "bool"
-            )
-            if environment_check:
-                environment = get_response(
-                    "Please enter the environment to use", "string", mandatory=True
-                )
-            else:
-                environment = args.environment
-        if not args.csr_extensions:
+        else:
+            environment = args.environment
+    else:
+        environment = args.environment
+    if not args.csr_extensions:
+        if not skip_prompts:
             csr_check = get_response(
                 "Would you like to set any CSR extension attributes?", "bool"
             )
@@ -227,14 +227,17 @@ def main():
             else:
                 csr_extensions = None
         else:
-            csr_extensions = args.csr_extensions
+            csr_extensions = None
+    else:
+        csr_extensions = args.csr_extensions
 
-        if not args.new_hostname:
-            new_hostname = check_hostname_change()
-        else:
-            new_hostname = args.new_hostname
+    if not args.new_hostname and not skip_prompts:
+        new_hostname = check_hostname_change()
+    else:
+        new_hostname = args.new_hostname
 
-        if not args.certname:
+    if not args.certname:
+        if not skip_prompts:
             set_certname = get_response(
                 "Would you like to set a custom certificate name?", "bool"
             )
@@ -244,6 +247,11 @@ def main():
                 )
             else:
                 certname = None
+        else:
+            certname = None
+    else:
+        certname = args.certname
+
 
     # If the new hostname doesn't have the domain appended then add it
     if not new_hostname.endswith(domain_name):
@@ -275,7 +283,7 @@ Puppet will be installed and configured with the following settings:
     print_important(confirmation_message)
 
     # Only ask the user to confirm if we're not skipping the confirmation
-    if skip_confirmation:
+    if not skip_confirmation:
         confirm = get_response("Do you want to proceed?", "bool")
         if not confirm:
             print_error("User cancelled installation")
