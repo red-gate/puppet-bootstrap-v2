@@ -2,29 +2,31 @@
 .SYNOPSIS
     This script will aid you in installing and configuring Puppet on Windows.
 .DESCRIPTION
-    A longer description of the function, its purpose, common use cases, etc.
+    This script will guide you through the process of installing and configuring Puppet on Windows.
+    The script can be run fully automated by passing in all the required parameters, or it can be run interactively
+    to allow you to specify the required information as you go.
 .NOTES
-    Information or caveats about the function e.g. 'This function is not supported in Linux'
-.LINK
-    Specify a URI to a help page, this will show when Get-Help -Online is used.
+    This script must be run in an elevated PowerShell session.
+    Detailed information on how to run this script can be found in the README.md file.
 .EXAMPLE
-    Test-MyTestFunction -Verbose
-    Explanation of the function or its result. You can include multiple examples with additional .EXAMPLE lines
+    bootstrap_puppet-windows.ps1 `
+        -PuppetServer 'puppet.example.com' `
+        -DomainName 'example.com' `
+        -PuppetEnvironment 'production' `
+        -MajorVersion 7
+
+    This will install Puppet agent version 7 and configure it to connect to puppet.example.com in the production environment.
+    As the optional parameters are not specified the script will prompt you for the rest of the information that may be required
 #>
 [CmdletBinding()]
 param (
-    # The major version of Puppet agent to install
+    # The version of Puppet agent to install, can be a major version (e.g. 7) or an exact version (e.g. 7.12.0)
     [Parameter(Mandatory = $false)]
     [int]
-    $MajorVersion,
-
-    # The exact version of Puppet agent to install
-    [Parameter(Mandatory = $false)]
-    [version]
-    $ExactVersion,
+    $Version = 7,
 
     # The Puppet server to connect to
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [string]
     $PuppetServer,
 
@@ -36,7 +38,7 @@ param (
     # The Puppet environment to use
     [Parameter(Mandatory = $false)]
     [string]
-    $PuppetEnvironment,
+    $PuppetEnvironment = 'production',
 
     # Set this to change the default certificate name
     [Parameter(Mandatory = $false)]
@@ -74,31 +76,42 @@ param (
     $NewHostname,
 
     # Your domain name
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [string]
     $DomainName,
 
     # Skip the Puppetserver check
-    [Parameter(Mandatory = $false)]
     [switch]
     $SkipPuppetserverCheck,
 
     # Skips all optional prompts
-    [Parameter(Mandatory = $false)]
     [switch]
     $SkipOptionalPrompts,
 
     # Skips the confirmation prompt
-    [Parameter(Mandatory = $false)]
     [switch]
     $SkipConfirmation,
 
     # Skips the initial Puppet run, useful in some edge-cases
     [switch]
-    $SkipInitialRun
+    $SkipInitialRun,
+
+    # Set to run the script in unattended mode
+    [switch]
+    $Unattended
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($Unattended)
+{
+    $SkipConfirmation = $true
+    $SkipOptionalPrompts = $true
+    $SkipPuppetserverCheck = $true
+}
+
+# Always get current hostname so we can skip setting it if it's not changing
+$CurrentNodeName = $env:ComputerName
 
 function Get-Response
 {
@@ -163,13 +176,13 @@ function Get-Response
             {
                 While (!$Response)
                 {
-                    $Response = Read-Host $Prompt
+                    $Response = Read-Host "$($Prompt): "
                 }
             }
             # If not then allow us to skip
             else
             {
-                $Prompt = $Prompt + ' (Optional - press enter to skip)'
+                $Prompt = $Prompt + ' (Optional - press enter to skip): '
             }
             # Only return an object if we have one
             if ($Response)
@@ -305,12 +318,7 @@ function Set-PuppetConfigOption
         [Parameter(Mandatory = $false)]
         [string]
         [ValidateSet('agent', 'main', 'master')]
-        $Section = 'agent',
-
-        # On *nix systems the 'puppet' command requires elevation, set this parameter to prefix the command with 'sudo'
-        [Parameter(Mandatory = $false)]
-        [switch]
-        $Elevated
+        $Section = 'agent'
     )
 
     if (!$ConfigFilePath)
@@ -447,45 +455,93 @@ function Install-Puppet
     }
 }
 
-<#
-    The below prompts the user for the _required_ information to install and configure Puppet
-    if the information has not been passed in via parameters
-#>
-if (!$MajorVersion -and !$ExactVersion)
-{
-    $VersionPrompt = $null
-    while ($VersionPrompt -notmatch '^[0-9]+$')
-    {
-        $VersionPrompt = Read-Host -Prompt 'Enter the major version of Puppet agent to install (e.g. 7): '
-    }
-    try
-    {
-        $MajorVersion = [int]$VersionPrompt
-    }
-    catch
-    {
-        throw "Failed to convert $VersionPrompt to int"
-    }
-}
-if ($MajorVersion -and $ExactVersion)
-{
-    Write-Warning 'Both -MajorVersion and -ExactVersion were specified, -ExactVersion will be used.'
-}
-if ($ExactVersion)
-{
-    $MajorVersion = $ExactVersion.Major
-}
-Write-Verbose "Installing Version $MajorVersion"
 # Check if we are running as an administrator
 if (!(Test-Administrator))
 {
     throw 'You must run this script as an administrator'
 }
-# Make sure the PuppetServer is a valid FQDN
+
+<#
+    The below prompts the user for the _required_ information to install and configure Puppet
+    if the information has not been passed in via parameters
+#>
+if (!$PuppetServer)
+{
+    if ($Unattended)
+    {
+        throw 'The Puppet server FQDN is required for bootstrapping'
+    }
+    while (!$PuppetServer)
+    {
+        $PuppetServer = Read-Host -Prompt 'Enter the Puppet server FQDN: '
+    }
+}
+# Due to the way Puppet works we need to know the domain name, if the user hasn't provided it we'll try to work it out
+if (!$DomainName)
+{
+    # First see if we can get it from the environment
+    if ($env:USERDNSDOMAIN)
+    {
+        $DomainName = $env:USERDNSDOMAIN
+    }
+    # Failing that try to get it from the PuppetServer FQDN provided previously
+    else
+    {
+        if ($PuppetServer -match '([a-zA-Z0-9-]+)\.([a-zA-Z0-9-]+)$')
+        {
+            $DomainName = $Matches[0]
+        }
+    }
+    # If we're running with a user present then double check they are happy with the domain name we've worked out for them.
+    # It's important to get right now as it's very hard to change it in Puppet land later on.
+    # If we're unattended then we'll just use it and assume the user will override it on the command line if it's wrong
+    if (!$Unattended)
+    {
+        Write-Host "Domain name detected as $DomainName" -ForegroundColor Yellow
+        $DomainNameCheck = Get-Response 'Do you want to use this domain name for this machine?' 'bool'
+        if ($DomainNameCheck -eq $false)
+        {
+            $DomainName = $null
+        }
+    }
+    # If we still don't have a domain name then prompt the user for it
+    if (!$DomainName)
+    {
+        if (!$Unattended)
+        {
+            while (!$DomainName)
+            {
+                $DomainName = Read-Host -Prompt 'Enter the domain name for this machine: '
+            }
+        }
+        else
+        {
+            throw 'The domain name is required for bootstrapping'
+        }
+    }
+}
+
+# Ensure the domain name doesn't have any leading dots
+$DomainName = $DomainName.TrimStart('.')
+
+# Ensure the $PuppetServer is a FQDN
 if ($PuppetServer -notmatch "$($DomainName)$")
 {
     $PuppetServer = "$($PuppetServer).$($DomainName)"
 }
+
+if (!$Version)
+{
+    $VersionPrompt = $null
+    while ($VersionPrompt -notmatch '^\d+(\.\d+)*$')
+    {
+        $VersionPrompt = Read-Host -Prompt 'Enter the version of Puppet agent to install, Can be a major version (e.g. 7) or exact (e.g 7.1.2):'
+    }
+    $Version = $VersionPrompt
+}
+
+Write-Verbose "Installing Version $Version"
+
 # Check we can contact the Puppet Server
 # This is handy as we don't want to get too far in the script if we can't contact the server!
 if (!$SkipPuppetserverCheck)
@@ -508,24 +564,6 @@ if (!$SkipPuppetserverCheck)
         - CSR Extensions
         - New Hostname
 #>
-if (!$SkipOptionalPrompts)
-{
-    if (!$PuppetEnvironment)
-    {
-        $PuppetEnvironment = Get-Response 'Enter the Puppet environment to use (e.g production), press enter to skip' 'string'
-    }
-
-    if (!$CSRExtensions)
-    {
-        $CSRExtensionCheck = Get-Response 'Do you want to add CSR extensions?' 'bool'
-        if ($CSRExtensionCheck)
-        {
-            $CSRExtensions = Get-CSRAttributes
-        }
-    }
-}
-# Always get current hostname so we can skip setting it if it's not changing
-$CurrentNodeName = $env:ComputerName
 if (!$NewHostname)
 {
     if (!$SkipOptionalPrompts)
@@ -542,7 +580,33 @@ if (!$NewHostname)
         $NewHostname = $CurrentNodeName
     }
 }
-# On Windows ensure the hostname is NOT fully qualified
+if (!$SkipOptionalPrompts)
+{
+    if (!$PuppetEnvironment)
+    {
+        $PuppetEnvironment = Get-Response 'Enter the Puppet environment to use (e.g production), press enter to skip' 'string'
+    }
+
+    if (!$CertificateName)
+    {
+        $CertificateCheck = Get-Response 'Do you want to set a custom certificate name?' 'bool'
+        if ($CertificateCheck)
+        {
+            $CertificateName = Get-Response 'Enter the certificate name' 'string' -Mandatory
+        }
+    }
+
+    if (!$CSRExtensions)
+    {
+        $CSRExtensionCheck = Get-Response 'Do you want to add CSR extensions?' 'bool'
+        if ($CSRExtensionCheck)
+        {
+            $CSRExtensions = Get-CSRAttributes
+        }
+    }
+}
+
+# On Windows ensure the hostname is NOT fully qualified (this will break hostname changes)
 if (($NewHostname -match "$($DomainName)$"))
 {
     $NewHostName -replace "\.$($DomainName)", ''
@@ -630,10 +694,15 @@ if ($NewHostname -ne $CurrentNodeName)
     }
     # Windows name changes don't take hold until after a reboot
     Write-Warning 'Hostname change will take effect after a reboot'
-    # So set the Puppet certificate name to match the hostname that will be used going forward
-    # That way Puppet will make the right CSR and avoid us having to reboot and try again
-    # This _must_ be lower case!
-    $CertificateName = "$($NewHostname).$($DomainName)".ToLower()
+    # If we're changing hostnames as part of this process then we'll need to tell Puppet to use the new hostname
+    # in the certificate request otherwise we'd have to reboot and re-run the script with the new hostname
+    # However if the user is overriding the certificate name then we don't need to do this as they're doing something
+    # more advanced and will likely know what they're doing.
+    if (!$CertificateName)
+    {
+        # This _must_ be lower case!
+        $CertificateName = "$($NewHostname).$($DomainName)".ToLower()
+    }
 }
 
 # Install puppet-agent
