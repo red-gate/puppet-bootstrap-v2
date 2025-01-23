@@ -592,16 +592,18 @@ def main():
         domain_name = subprocess.check_output(["hostname", "-d"], text=True).strip()
         # If that fails then try to work it out from the Puppet server FQDN
         if not domain_name:
-            domain_name = puppet_server.split(".", 1)[1]
+            if re.match(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}", puppet_server):
+                domain_name = puppet_server.split(".", 1)[1]
         # Always check if the user is happy with the domain name we've worked out
         # (it's very hard to change later in Puppet if we've gotten it wrong so we don't class this as an "optional" prompt)
         if not unattended:
-            print_important(f"Domain name: {domain_name}")
-            domain_name_check = get_response(
-                "Do you want to use this domain name for this machine?", "bool"
-            )
-            if not domain_name_check:
-                domain_name = None
+            if domain_name:
+                print_important(f"Domain name: {domain_name}")
+                domain_name_check = get_response(
+                    "Do you want to use this domain name for this machine?", "bool"
+                )
+                if not domain_name_check:
+                    domain_name = None
         # If we're running unattended then we'll just have to exit if we don't have a domain name
         else:
             print_error("Error: The domain name is required for bootstrapping")
@@ -612,6 +614,9 @@ def main():
         domain_name = args.domain_name
     # Strip the domain name of any leading periods
     domain_name = domain_name.lstrip(".")
+    # Ensure the puppet_server includes the domain name
+    if not puppet_server.endswith(domain_name):
+        puppet_server = f"{puppet_server}.{domain_name}"
     # If we don't have a version then we'll need to prompt the user
     if not args.agent_version:
         version_prompt = None
