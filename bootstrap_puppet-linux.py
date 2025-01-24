@@ -512,7 +512,7 @@ def parse_args():
         default=True
     )
     parser.add_argument(
-        "--wait-for-cert",
+        "--csr-retry-interval",
         help="How long to wait for the certificate to be signed",
         default=30,
     )
@@ -521,7 +521,7 @@ def parse_args():
         help="The new hostname to set"
         )
     parser.add_argument(
-        "--skip-puppetserver-check",
+        "--skip-puppet-server-check",
         help="Skip the Puppet server check",
         action="store_false",
     )
@@ -574,7 +574,7 @@ def main():
 
     if args.skip_optional_prompts:
         skip_prompts = True
-    if args.skip_puppetserver_check:
+    if args.skip_puppet_server_check:
         skip_ping_check = True
     if args.skip_confirmation:
         skip_confirmation = True
@@ -631,7 +631,7 @@ def main():
 
     # Check if we can ping the Puppet server, if not then raise an error and exit
     # This helps us avoid half configuring a system and failing at the end
-    # If --skip-puppetserver-check is set then we'll skip this check
+    # If --skip-puppet-server-check is set then we'll skip this check
     if not skip_ping_check:
         try:
             subprocess.run(
@@ -727,9 +727,9 @@ Puppet will be installed and configured with the following settings:
         confirmation_message += "    - CSR extension attributes:\n"
         for key, value in csr_extensions.items():
             confirmation_message += f"        - {key}: {value}\n"
-    if args.wait_for_cert > 0:
+    if args.csr_retry_interval > 0:
         confirmation_message += (
-            f"    - Wait for certificate: {args.wait_for_cert} seconds\n"
+            f"    - Wait for certificate: {args.csr_retry_interval} seconds\n"
         )
     if args.enable_service:
         confirmation_message += "    - Enable the Puppet service: true\n"
@@ -795,9 +795,9 @@ Puppet will be installed and configured with the following settings:
     if not args.skip_initial_run:
         print_important("Performing first Puppet run...")
         puppet_args = [puppet_bin, "agent", "--test", "--detailed-exitcodes"]
-        if args.wait_for_cert > 0:
+        if args.csr_retry_interval > 0:
             puppet_args.append(f"--waitforcert")
-            puppet_args.append(str(args.wait_for_cert))
+            puppet_args.append(str(args.csr_retry_interval))
             print_important(
                 f"Please ensure you sign the certificate for this node on the Puppet server."
             )

@@ -68,7 +68,7 @@ param (
     # If set the Puppet agent will wait for the certificate to be signed before continuing
     [Parameter(Mandatory = $false)]
     [string]
-    $WaitForCert = 30,
+    $CSRRetryInterval = 30,
 
     # If set will change the Hostname of this node
     [Parameter(Mandatory = $false)]
@@ -657,9 +657,9 @@ if ($CSRExtensions)
     }
 
 }
-if ($WaitForCert -gt 0)
+if ($CSRRetryInterval -gt 0)
 {
-    $Message += "    Wait for certificate: $($WaitForCert)s`n"
+    $Message += "    Wait for certificate: $($CSRRetryInterval)s`n"
 }
 if ($EnableService)
 {
@@ -825,9 +825,10 @@ if (!$SkipInitialRun)
     # Perform first run of Puppet
     Write-Host 'Performing initial Puppet run' -ForegroundColor Magenta
     $PuppetArgs = @('agent', '-t', '--detailed-exitcodes')
-    if ($WaitForCert)
+    if ($CSRRetryInterval -gt 0)
     {
-        $PuppetArgs += @('--waitforcert', $WaitForCert)
+        $PuppetArgs += @('--waitforcert', $CSRRetryInterval)
+        Write-Host 'Please ensure you sign the certificate for this node on the Puppet server' -ForegroundColor Yellow
     }
 
     & puppet $PuppetArgs
