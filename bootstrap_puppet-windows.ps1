@@ -75,11 +75,6 @@ param (
     [string]
     $NewHostname,
 
-    # Your domain name
-    [Parameter(Mandatory = $false)]
-    [string]
-    $DomainName,
-
     # Skip the Puppetserver check
     [switch]
     $SkipPuppetserverCheck,
@@ -520,59 +515,26 @@ if (!$PuppetServer)
         $PuppetServer = Read-Host -Prompt 'Enter the Puppet server FQDN: '
     }
 }
-# Due to the way Puppet works we need to know the domain name, if the user hasn't provided it we'll try to work it out
-if (!$DomainName)
+
+if ($PuppetServer -notmatch '\.[a-zA-Z0-9-]+$')
 {
-    # First see if we can get it from the environment
-    if ($env:USERDNSDOMAIN)
-    {
-        $DomainName = $env:USERDNSDOMAIN
-    }
-    # Failing that try to get it from the PuppetServer FQDN provided previously
-    else
-    {
-        if ($PuppetServer -match '([a-zA-Z0-9-]+)\.([a-zA-Z0-9-]+)$')
-        {
-            $DomainName = $Matches[0]
-        }
-    }
-    # If we're running with a user present then double check they are happy with the domain name we've worked out for them.
-    # It's important to get right now as it's very hard to change it in Puppet land later on.
-    # If we're unattended then we'll just use it and assume the user will override it on the command line if it's wrong
     if (!$Unattended)
     {
-        Write-Host "Domain name detected as $DomainName" -ForegroundColor Yellow
-        $DomainNameCheck = Get-Response 'Do you want to use this domain name for this machine?' 'bool'
-        if ($DomainNameCheck -eq $false)
+        while ($PuppetServer -notmatch '^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*$')
         {
-            $DomainName = $null
+            Write-Host 'The Puppet server must be fully qualified (e.g. "puppetserver.domain")' -ForegroundColor Red
+            $PuppetServer = Read-Host -Prompt 'Enter the Puppet server FQDN: '
         }
     }
-    # If we still don't have a domain name then prompt the user for it
-    if (!$DomainName)
+    else
     {
-        if (!$Unattended)
-        {
-            while (!$DomainName)
-            {
-                $DomainName = Read-Host -Prompt 'Enter the domain name for this machine: '
-            }
-        }
-        else
-        {
-            throw 'The domain name is required for bootstrapping'
-        }
+        throw 'The Puppet server must be fully qualified (e.g. "puppetserver.domain")'
     }
 }
 
-# Ensure the domain name doesn't have any leading dots
-$DomainName = $DomainName.TrimStart('.')
-
-# Ensure the $PuppetServer is a FQDN
-if ($PuppetServer -notmatch "$($DomainName)$")
-{
-    $PuppetServer = "$($PuppetServer).$($DomainName)"
-}
+# Extract the domain name from the Puppet server
+# Due to the way Puppet certs work it's helpful to know this especially when renaming a node
+$DomainName = $PuppetServer -replace '^[a-zA-Z0-9-]+\.', ''
 
 if (!$AgentVersion)
 {
@@ -659,9 +621,20 @@ if (!$SkipOptionalPrompts)
 }
 
 # On Windows ensure the hostname is NOT fully qualified (this will break hostname changes)
-if ($NewHostname -match "$($DomainName)$")
+# It's pretty annoying as on Linux they MUST be fully qualified
+# So we don't fail and instead try to be helpful and remove the domain
+if ($NewHostname -match '\.')
 {
-    $NewHostName = $NewHostName -replace "\.$($DomainName)", ''
+    $CertWarning = 'Hostname cannot be fully qualified, removing domain'
+    # Suspect in most cases if the user has entered a fully qualified hostname they actually
+    # want to use that as the certificate name
+    if (!$CertificateName)
+    {
+        $CertificateName = $NewHostname
+        $CertWarning += "`nCertificate name will be set to '$CertificateName'"
+    }
+    Write-Warning $CertWarning
+    $NewHostname = $NewHostname -replace '\..*'
 }
 ###
 
@@ -672,6 +645,10 @@ $Message += @"
     Puppet Server Port: $PuppetServerPort
     Hostname: $NewHostname`n
 "@
+if ($CertificateName)
+{
+    $Message += "    Certificate Name: $($CertificateName)`n"
+}
 if ($CSRExtensions)
 {
     $Message += "    Certificate Extensions:`n"
@@ -679,10 +656,6 @@ if ($CSRExtensions)
         $Message += "       $($_.Key): $($_.Value)`n"
     }
 
-}
-if ($CertificateName)
-{
-    $Message += "    Certificate Name: $($CertificateName)`n"
 }
 if ($WaitForCert -gt 0)
 {
@@ -747,7 +720,8 @@ if ($NewHostname -ne $CurrentNodeName)
     # Windows name changes don't take hold until after a reboot
     Write-Warning 'Hostname change will take effect after a reboot'
     # If we're changing hostnames as part of this process then we'll need to tell Puppet to use the new hostname
-    # in the certificate request otherwise we'd have to reboot and re-run the script with the new hostname
+    # in the certificate request otherwise we'd have to reboot and re-run the script to pick up the new hostname
+    # (Puppet seems to have a real hard time determining domain names on Windows...)
     # However if the user is overriding the certificate name then we don't need to do this as they're doing something
     # more advanced and will likely know what they're doing.
     if (!$CertificateName)

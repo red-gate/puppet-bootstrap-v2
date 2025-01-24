@@ -480,7 +480,11 @@ def parse_args():
         help="The version of Puppet agent to install can be just the major version (e.g. '7') or the full version number (e.g. '7.12.0')",
         default="7",
     )
-    parser.add_argument("-s", "--puppet-server", help="The Puppet server to connect to")
+    parser.add_argument(
+        "-s",
+        "--puppet-server",
+        help="The Puppet server to connect to"
+        )
     parser.add_argument(
         "-e",
         "--environment",
@@ -493,22 +497,29 @@ def parse_args():
         help="The CSR extension attributes to use",
         type=json.loads,
     )
-    parser.add_argument("-d", "--domain-name", help="Your domain name")
     parser.add_argument(
-        "--puppet-port",
+        "--puppet-server-port",
         help="The port the Puppet server is listening on",
         default="8140",
     )
-    parser.add_argument("--certname", help="The certificate name to use")
     parser.add_argument(
-        "--enable-service", help="Enable the Puppet service", default=True
+        "--certificate-name",
+        help="The certificate name to use"
+        )
+    parser.add_argument(
+        "--enable-service",
+        help="Enable the Puppet service",
+        default=True
     )
     parser.add_argument(
         "--wait-for-cert",
         help="How long to wait for the certificate to be signed",
         default=30,
     )
-    parser.add_argument("--new-hostname", help="The new hostname to set")
+    parser.add_argument(
+        "--new-hostname",
+        help="The new hostname to set"
+        )
     parser.add_argument(
         "--skip-puppetserver-check",
         help="Skip the Puppet server check",
@@ -585,38 +596,20 @@ def main():
     else:
         log.info(f"Puppet server: {args.puppet_server}")
         puppet_server = args.puppet_server
-    # We need to know the domain name of the system if it's not been provided
-    if not args.domain_name:
-        # We'll try an be helpful and work it out for the user if we can
-        # We'll start by checking if there's a domain name set on the system
-        domain_name = subprocess.check_output(["hostname", "-d"], text=True).strip()
-        # If that fails then try to work it out from the Puppet server FQDN
-        if not domain_name:
-            if re.match(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}", puppet_server):
-                domain_name = puppet_server.split(".", 1)[1]
-        # Always check if the user is happy with the domain name we've worked out
-        # (it's very hard to change later in Puppet if we've gotten it wrong so we don't class this as an "optional" prompt)
-        if not unattended:
-            if domain_name:
-                print_important(f"Domain name: {domain_name}")
-                domain_name_check = get_response(
-                    "Do you want to use this domain name for this machine?", "bool"
-                )
-                if not domain_name_check:
-                    domain_name = None
-        # If we're running unattended then we'll just have to exit if we don't have a domain name
-        else:
-            print_error("Error: The domain name is required for bootstrapping")
+    # Ensure the puppet_server is fully qualified
+    if not re.match(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}", puppet_server):
+        if unattended:
+            print_error("Error: The Puppet server must be a fully qualified domain name")
             sys.exit(1)
-        while not domain_name:
-            domain_name = input("Please enter the domain name for this node: ")
-    else:
-        domain_name = args.domain_name
+        else:
+            print_error("Error: The Puppet server must be a fully qualified domain name")
+            while not re.match(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}", puppet_server):
+                puppet_server = input("Please enter the FQDN of the Puppet server: ")
+    # Attempt to work out the domain name from the Puppet server
+    # It's useful to have the domain name for various parts of the logic throughout the script
+    domain_name = puppet_server.split(".", 1)[1]
     # Strip the domain name of any leading periods
     domain_name = domain_name.lstrip(".")
-    # Ensure the puppet_server includes the domain name
-    if not puppet_server.endswith(domain_name):
-        puppet_server = f"{puppet_server}.{domain_name}"
     # If we don't have a version then we'll need to prompt the user
     if not args.agent_version:
         version_prompt = None
@@ -635,12 +628,6 @@ def main():
     else:
         message_version = f"{major_version} (latest available)"
     log.info(f"Major version: {major_version}, Exact version: {exact_version}")
-
-    # Ensure the Puppet server has the domain appended to it
-    if not puppet_server.endswith(domain_name):
-        puppet_server = f"{puppet_server}.{domain_name}"
-    else:
-        puppet_server = puppet_server
 
     # Check if we can ping the Puppet server, if not then raise an error and exit
     # This helps us avoid half configuring a system and failing at the end
@@ -696,7 +683,7 @@ def main():
     else:
         new_hostname = args.new_hostname
 
-    if not args.certname:
+    if not args.certificate_name:
         if not skip_prompts:
             set_certname = get_response(
                 "Would you like to set a custom certificate name?", "bool"
@@ -710,20 +697,27 @@ def main():
         else:
             certname = None
     else:
-        certname = args.certname
+        certname = args.certificate_name
 
 
-    # If the new hostname doesn't have the domain appended then add it
-    if not new_hostname.endswith(domain_name):
+    # If the new hostname isn't fully qualified it can cause us a couple of problems.
+    # Firstly it can cause some issues when registering the node in DNS.
+    # Secondly we end up with odd nodes hanging around in Puppet which makes it harder to manage.
+    # Therefore ensure the hostname is fully qualified at this stage, even if the user is
+    # setting a custom certname for Puppet
+    if not re.match(r"\.", new_hostname):
+        print_important('The new hostname was not fully qualified, appending the domain name')
+        # Add the same domain as the Puppetserver, that's usually a safe bet
         new_hostname = f"{new_hostname}.{domain_name}"
-
+    else:
+        log.info(f"New hostname appears to be fully qualified: {new_hostname}")
     ### Ensure the user is happy and wants to proceed ###
     confirmation_message = f"""
 Puppet will be installed and configured with the following settings:
 
     - Puppet Agent version: {message_version}
     - Puppet server: {puppet_server}
-    - Puppet port: {args.puppet_port}
+    - Puppet port: {args.puppet_server_port}
     - Puppet environment: {environment}
     - Hostname: {new_hostname}
 """
@@ -787,7 +781,7 @@ Puppet will be installed and configured with the following settings:
         set_certificate_extensions(csr_extensions)
 
     # Set the puppet.conf options
-    main_config_options = {"server": puppet_server, "masterport": args.puppet_port}
+    main_config_options = {"server": puppet_server, "masterport": args.puppet_server_port}
     if certname:
         main_config_options["certname"] = certname
 
