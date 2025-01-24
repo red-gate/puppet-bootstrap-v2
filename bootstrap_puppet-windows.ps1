@@ -23,7 +23,7 @@ param (
     # The version of Puppet agent to install, can be a major version (e.g. 7) or an exact version (e.g. 7.12.0)
     [Parameter(Mandatory = $false)]
     [int]
-    $Version = 7,
+    $AgentVersion = 7,
 
     # The Puppet server to connect to
     [Parameter(Mandatory = $false)]
@@ -38,7 +38,7 @@ param (
     # The Puppet environment to use
     [Parameter(Mandatory = $false)]
     [string]
-    $PuppetEnvironment = 'production',
+    $Environment = 'production',
 
     # Set this to change the default certificate name
     [Parameter(Mandatory = $false)]
@@ -221,6 +221,29 @@ function Test-Administrator
     $Return = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     Return $Return
 }
+
+function Split-Version
+{
+    param (
+        [string]$version
+    )
+
+    $majorVersion = $version.Split('.')[0]
+
+    if ($version -match '^\d+\.\d+\.\d+$')
+    {
+        $exactVersion = $version
+    }
+    else
+    {
+        $exactVersion = $null
+    }
+
+    return @{
+        majorVersion = $majorVersion
+        exactVersion = $exactVersion
+    }
+}
 function Get-CSRAttributes
 {
     $Continue = $true
@@ -402,13 +425,34 @@ function Install-Puppet
     $DownloadPath = "$env:TEMP\puppet-agent.msi"
     Write-Verbose "Downloading Puppet agent from $URI to $DownloadPath"
 
-    try
+    # Check if BITs is available and use it if it is
+    if (Get-Command 'Start-BitsTransfer' -ErrorAction SilentlyContinue)
     {
-        Invoke-WebRequest -Uri $URI -OutFile $DownloadPath
+        try
+        {
+            Start-BitsTransfer -Source $URI -Destination $DownloadPath
+        }
+        catch
+        {
+            # If we fail don't fail, fallback to Invoke-WebRequest
+            $UseLegacy = $true
+        }
     }
-    catch
+    else
     {
-        throw "Failed to download Puppet agent from $URI to $DownloadPath.`n$($_.Exception.Message)"
+        $UseLegacy = $true
+    }
+    if ($UseLegacy)
+    {
+        Write-Warning 'BITS is not available, falling back to Invoke-WebRequest, this will be slow...'
+        try
+        {
+            Invoke-WebRequest -Uri $URI -OutFile $DownloadPath
+        }
+        catch
+        {
+            throw "Failed to download Puppet agent from $URI to $DownloadPath.`n$($_.Exception.Message)"
+        }
     }
     $install_args = @(
         '/qn',
@@ -530,22 +574,30 @@ if ($PuppetServer -notmatch "$($DomainName)$")
     $PuppetServer = "$($PuppetServer).$($DomainName)"
 }
 
-if (!$Version)
+if (!$AgentVersion)
 {
     $VersionPrompt = $null
     while ($VersionPrompt -notmatch '^\d+(\.\d+)*$')
     {
         $VersionPrompt = Read-Host -Prompt 'Enter the version of Puppet agent to install, Can be a major version (e.g. 7) or exact (e.g 7.1.2):'
     }
-    $Version = $VersionPrompt
+    $AgentVersion = $VersionPrompt
 }
 
-Write-Verbose "Installing Version $Version"
+$VersionSplit = Split-Version -version $AgentVersion
+$MajorVersion = $VersionSplit.majorVersion
+if ($VersionSplit.exactVersion)
+{
+    $ExactVersion = $VersionSplit.exactVersion
+}
+
+Write-Verbose "Installing Version $AgentVersion"
 
 # Check we can contact the Puppet Server
 # This is handy as we don't want to get too far in the script if we can't contact the server!
 if (!$SkipPuppetserverCheck)
 {
+    Write-Verbose "Checking if we can ping $PuppetServer"
     $arguments = @($PuppetServer)
     $PuppetServerPing = & ping $arguments
     if ($LASTEXITCODE -ne 0)
@@ -582,9 +634,9 @@ if (!$NewHostname)
 }
 if (!$SkipOptionalPrompts)
 {
-    if (!$PuppetEnvironment)
+    if (!$Environment)
     {
-        $PuppetEnvironment = Get-Response 'Enter the Puppet environment to use (e.g production), press enter to skip' 'string'
+        $Environment = Get-Response 'Enter the Puppet environment to use (e.g production), press enter to skip' 'string'
     }
 
     if (!$CertificateName)
@@ -607,9 +659,9 @@ if (!$SkipOptionalPrompts)
 }
 
 # On Windows ensure the hostname is NOT fully qualified (this will break hostname changes)
-if (($NewHostname -match "$($DomainName)$"))
+if ($NewHostname -match "$($DomainName)$")
 {
-    $NewHostName -replace "\.$($DomainName)", ''
+    $NewHostName = $NewHostName -replace "\.$($DomainName)", ''
 }
 ###
 
@@ -708,7 +760,6 @@ if ($NewHostname -ne $CurrentNodeName)
 # Install puppet-agent
 Write-Host 'Installing puppet-agent' -ForegroundColor Magenta
 $InstallArgs = @{
-    Application = 'puppet-agent'
 }
 if ($ExactVersion)
 {
@@ -755,9 +806,9 @@ if ($CSRExtensions)
 
 $PuppetMainConfigOptions = @{server = $PuppetServer; masterport = $PuppetServerPort }
 $PuppetAgentConfigOptions = @{}
-if ($PuppetEnvironment)
+if ($Environment)
 {
-    $PuppetAgentConfigOptions.Add('environment', $PuppetEnvironment)
+    $PuppetAgentConfigOptions.Add('environment', $Environment)
 }
 
 if ($CertificateName)
