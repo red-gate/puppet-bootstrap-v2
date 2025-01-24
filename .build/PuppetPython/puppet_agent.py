@@ -25,7 +25,11 @@ def parse_args():
         help="The version of Puppet agent to install can be just the major version (e.g. '7') or the full version number (e.g. '7.12.0')",
         default="7",
     )
-    parser.add_argument("-s", "--puppet-server", help="The Puppet server to connect to")
+    parser.add_argument(
+        "-s",
+        "--puppet-server",
+        help="The Puppet server to connect to"
+        )
     parser.add_argument(
         "-e",
         "--environment",
@@ -38,22 +42,34 @@ def parse_args():
         help="The CSR extension attributes to use",
         type=json.loads,
     )
-    parser.add_argument("-d", "--domain-name", help="Your domain name")
     parser.add_argument(
-        "--puppet-port",
+        "-d",
+        "--domain-name",
+        help="Your domain name"
+        )
+    parser.add_argument(
+        "--puppet-server-port",
         help="The port the Puppet server is listening on",
         default="8140",
     )
-    parser.add_argument("--certname", help="The certificate name to use")
     parser.add_argument(
-        "--enable-service", help="Enable the Puppet service", default=True
+        "--certificate-name",
+        help="The certificate name to use"
+        )
+    parser.add_argument(
+        "--enable-service",
+        help="Enable the Puppet service",
+        default=True
     )
     parser.add_argument(
         "--wait-for-cert",
         help="How long to wait for the certificate to be signed",
         default=30,
     )
-    parser.add_argument("--new-hostname", help="The new hostname to set")
+    parser.add_argument(
+        "--new-hostname",
+        help="The new hostname to set"
+        )
     parser.add_argument(
         "--skip-puppetserver-check",
         help="Skip the Puppet server check",
@@ -241,7 +257,7 @@ def main():
     else:
         new_hostname = args.new_hostname
 
-    if not args.certname:
+    if not args.certificate_name:
         if not skip_prompts:
             set_certname = get_response(
                 "Would you like to set a custom certificate name?", "bool"
@@ -255,7 +271,7 @@ def main():
         else:
             certname = None
     else:
-        certname = args.certname
+        certname = args.certificate_name
 
 
     # If the new hostname doesn't have the domain appended then add it
@@ -268,7 +284,7 @@ Puppet will be installed and configured with the following settings:
 
     - Puppet Agent version: {message_version}
     - Puppet server: {puppet_server}
-    - Puppet port: {args.puppet_port}
+    - Puppet port: {args.puppet_server_port}
     - Puppet environment: {environment}
     - Hostname: {new_hostname}
 """
@@ -332,7 +348,7 @@ Puppet will be installed and configured with the following settings:
         set_certificate_extensions(csr_extensions)
 
     # Set the puppet.conf options
-    main_config_options = {"server": puppet_server, "masterport": args.puppet_port}
+    main_config_options = {"server": puppet_server, "masterport": args.puppet_server_port}
     if certname:
         main_config_options["certname"] = certname
 
