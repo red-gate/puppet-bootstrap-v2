@@ -477,13 +477,8 @@ def parse_args():
     )
     parser.add_argument(
         "-v",
-        "--version",
-        help="The version of Puppet to install\nThis can be just the major version (e.g. '7') or the full version number (e.g. '7.12.0')",
-    )
-    parser.add_argument(
-        "-d",
-        "--domain-name",
-        help="The name of the domain that the server is in. (e.g. example.com)",
+        "--puppetserver-version",
+        help="The version of Puppet Server to install\nThis can be just the major version (e.g. '7') or the full version number (e.g. '7.12.0')",
     )
     parser.add_argument(
         "-e",
@@ -545,6 +540,11 @@ def parse_args():
         help="The version of Hiera-eyaml to install",
     )
     parser.add_argument(
+        "--remove-original-keys",
+        help="When supplying r10k/eyaml keys, remove the original keys after writing them to the correct location",
+        default=True,
+    )
+    parser.add_argument(
         "--r10k-path",
         help="The path to the r10k binary",
         # Default to 'r10k' as we hope it's in the PATH
@@ -573,6 +573,11 @@ def parse_args():
     parser.add_argument(
         "--skip-confirmation",
         help="Skip the confirmation prompt",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--unattended",
+        help="Run the script in unattended mode",
         action="store_true",
     )
     parser.add_argument(
@@ -856,6 +861,10 @@ def main():
 
     # Set the application we want to install - this will be used later
     app = "server"
+    skip_prompts = False
+    skip_ping_check = False
+    skip_confirmation = False
+    unattended = False
 
     # Ensure we are in an environment that is supported and set some global variables
     get_os_id()
@@ -867,7 +876,17 @@ def main():
     # Parse the command line arguments
     args = parse_args()
 
-    # If the user has supplied either an eyaml private or public key but not the other then error
+    if args.skip_optional_prompts:
+        skip_prompts = True
+    if args.skip_confirmation:
+        skip_confirmation = True
+    if args.unattended:
+        skip_prompts = True
+        skip_confirmation = True
+        unattended = True
+
+    # If the user has supplied either an eyaml private or public key via the CLI but not the other then error
+    # we _could_ prompt for the missing key but given that the user has supplied one we'll assume they know what they're doing
     if (args.eyaml_privatekey and not args.eyaml_publickey) or (
         args.eyaml_publickey and not args.eyaml_privatekey
     ):
@@ -882,30 +901,29 @@ def main():
     # Print out a welcome message
     print_welcome(app)
 
-    ### Check for any information we absolute must have and prompt the user if not provided ###
-    if not args.domain_name:
-        domain_name = get_response(
-            "Please enter the domain name (e.g. example.com)", "string", mandatory=True
-        )
-    else:
-        domain_name = args.domain_name
-    # Strip the domain name of any leading dots
-    domain_name = domain_name.lstrip(".")
-
+    ### Check for required bootstrap information
     # Check if the user wants to change the hostname if none is provided
-    if not args.new_hostname and not args.skip_optional_prompts:
+    if not args.new_hostname and not skip_prompts:
         new_hostname = check_hostname_change()
-    elif not args.new_hostname and args.skip_optional_prompts:
+    elif not args.new_hostname and skip_prompts:
         new_hostname = current_hostname
     else:
         new_hostname = args.new_hostname
 
-    # Ensure the hostname has the domain name appended
-    if not new_hostname.endswith(domain_name):
-        new_hostname = f"{new_hostname}.{domain_name}"
+    if not re.match(r"\.", new_hostname):
+        if unattended:
+            print_error(
+                "Error: The hostname must be a FQDN. Please provide a hostname with a domain name"
+            )
+        else:
+            while not re.match(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}", new_hostname):
+                new_hostname = get_response(
+                    "Please enter the new hostname for the server (FQDN)", "string", mandatory=True
+                )
+
 
     # If we don't have a version then we'll need to prompt the user
-    if not args.version:
+    if not args.puppetserver_version:
         version_prompt = None
         while not version_prompt or not re.match(r"^\d+(\.\d+)*$", version_prompt):
             version_prompt = input(
@@ -913,7 +931,7 @@ def main():
             )
         version = version_prompt
     else:
-        version = args.version
+        version = args.puppetserver_version
 
     # Split the version into major and exact versions
     major_version, exact_version = split_version(version)
@@ -926,7 +944,7 @@ def main():
     ### Check for any _optional_ information that and prompt if not provided (as long as we're not skipping the optional prompts) ###
     # If the user hasn't supplied an r10k repository then check if they want to set one
     if not args.r10k_repository:
-        if not args.skip_optional_prompts:
+        if not skip_prompts:
             r10k_check = None
             while r10k_check is None:
                 r10k_check = get_response("Would you like to use r10k?", "bool")
@@ -947,11 +965,18 @@ def main():
     if r10k_repository:
         # The repository might need an ssh key if it's private, check with the user
         if not args.r10k_repository_key:
-            if not args.skip_optional_prompts:
+            # AFAIK GitHub requires the use of SSH keys for SSH access even if the repository is public
+            # and r10k will fail without one when using the shellgit provider
+            # Warn the user if the repository URI looks like it's using SSH
+            if re.match(r"git@", r10k_repository):
+                print_important(
+                    "The repository URI looks appears to be using SSH. You likely need to provide a deploy key"
+                )
+            if not skip_prompts:
                 private_repository_check = None
                 while private_repository_check is None:
                     private_repository_check = get_response(
-                        "Is the repository private?", "bool"
+                        "Do you need to use an SSH key to access this repository?", "bool"
                     )
                 if private_repository_check:
                     r10k_repository_key_check = None
@@ -999,7 +1024,7 @@ def main():
         # Check if the user wants to change this
         if r10k_repository_key or generate_r10k_key:
             r10k_repository_key_owner = args.r10k_repository_key_owner
-            if not args.skip_optional_prompts and r10k_repository_key_owner == "root":
+            if not skip_prompts and r10k_repository_key_owner == "root":
                 r10k_repository_key_owner_check = None
                 while r10k_repository_key_owner_check is None:
                     r10k_repository_key_owner_check = get_response(
@@ -1019,7 +1044,7 @@ def main():
         # We need to know which environment (aka branch) we're going to bootstrap from
         # The default is 'production' but the user may want to change this
         bootstrap_environment = args.bootstrap_environment
-        if not args.skip_optional_prompts and bootstrap_environment == "production":
+        if not skip_prompts and bootstrap_environment == "production":
             bootstrap_environment_check = None
             while bootstrap_environment_check is None:
                 bootstrap_environment_check = get_response(
@@ -1036,7 +1061,7 @@ def main():
             bootstrap_environment = args.bootstrap_environment
         # Similarly the default Hiera file is 'hiera.bootstrap.yaml' but we can change this
         bootstrap_hiera = args.bootstrap_hiera
-        if not args.skip_optional_prompts and bootstrap_hiera == "hiera.bootstrap.yaml":
+        if not skip_prompts and bootstrap_hiera == "hiera.bootstrap.yaml":
             bootstrap_hiera_check = None
             while bootstrap_hiera_check is None:
                 bootstrap_hiera_check = get_response(
@@ -1083,7 +1108,7 @@ def main():
 
     # If the user hasn't supplied the eyaml keys then prompt for them
     if not args.eyaml_privatekey and not args.eyaml_publickey:
-        if not args.skip_optional_prompts:
+        if not skip_prompts:
             eyaml_key_check = None
             while eyaml_key_check is None:
                 eyaml_key_check = get_response(
@@ -1129,7 +1154,7 @@ def main():
 
     # Check if the user wants to set any CSR extension attributes
     if not args.csr_extensions:
-        if not args.skip_optional_prompts:
+        if not skip_prompts:
             csr_extensions_check = None
             while csr_extensions_check is None:
                 csr_extensions_check = get_response(
@@ -1150,7 +1175,6 @@ The Puppetserver will be configured with the following settings:
 
     - Puppet version: {message_version}
     - Hostname: {new_hostname}
-    - Domain name: {domain_name}
 """
     if r10k_repository:
         confirmation_message += f"    - r10k: enabled\n"
@@ -1159,6 +1183,10 @@ The Puppetserver will be configured with the following settings:
         confirmation_message += f"    - r10k repository: {r10k_repository}\n"
         if r10k_repository_key:
             confirmation_message += f"    - r10k repository key: <redacted>\n"
+            if args.remove_original_keys:
+                confirmation_message += (
+                    "    - r10k repository key will be removed after writing to the correct location\n"
+                )
         if r10k_repository_key_owner:
             confirmation_message += (
                 f"    - r10k repository key owner: {r10k_repository_key_owner}\n"
@@ -1175,6 +1203,8 @@ The Puppetserver will be configured with the following settings:
         confirmation_message += "    - r10k: disabled\n"
     if eyaml_privatekey:
         confirmation_message += "    - eyaml encryption: enabled\n"
+        if args.remove_original_keys:
+            confirmation_message += "    - eyaml keys will be removed after writing to the correct location\n"
         if eyaml_path:
             confirmation_message += f"    - eyaml key path: {eyaml_path}\n"
     else:
@@ -1186,7 +1216,7 @@ The Puppetserver will be configured with the following settings:
 
     print_important(confirmation_message)
 
-    if not args.skip_confirmation:
+    if not skip_confirmation:
         confirmation = get_response("Do you want to continue?", "bool")
         if not confirmation:
             print_error("User cancelled bootstrap process")
@@ -1338,16 +1368,38 @@ The Puppetserver will be configured with the following settings:
         final_message += f"Unfortunately the apply of the \"{puppetserver_class}\" was unsuccessful.\n"
         final_message += f"You'll need to check for any errors and correct them before proceeding further.\n"
     else:
-        final_message += f"Puppet should now take over and start managing this node.\n"
-    # If the user passed in any keys we should let them know that they should delete the originals
+        if r10k_repository:
+            final_message += f"Puppet should now take over and start managing this node.\n"
+    # Generally speaking keeping secure keys around on disk that are no longer needed is a bad idea.
+    # If we've successfully copied the keys to the correct location then we can delete the originals
+    # (providing the user wants to)
     if r10k_repository_key and not generate_r10k_key:
+        # In some cases the user may have copied the key to the correct location themselves, we don't want to delete it!
         if r10k_repository_key_path != deploy_key_path:
-            final_message += f"The deploy key you provided at \"{r10k_repository_key_path}\" has been copied to the correct location, you can now safely delete the original if no longer needed.\n"
+            if args.remove_original_keys:
+                try:
+                    os.remove(r10k_repository_key_path)
+                except Exception as e:
+                    print_error(f"Failed to remove the original deploy key. Error: {e}")
+            else:
+                final_message += f"The deploy key you provided at \"{r10k_repository_key_path}\" has been copied to the correct location, you can now safely delete the original if no longer needed.\n"
     if eyaml_privatekey:
         if eyaml_privatekey_path != eyaml_key_locations[0]:
-            final_message += f"The eyaml private key you provided at \"{eyaml_privatekey_path}\" has been copied to the correct location, you can now safely delete the originals if no longer needed.\n"
+            if args.remove_original_keys:
+                try:
+                    os.remove(eyaml_privatekey_path)
+                except Exception as e:
+                    print_error(f"Failed to remove the original eyaml private key. Error: {e}")
+            else:
+                final_message += f"The eyaml private key you provided at \"{eyaml_privatekey_path}\" has been copied to the correct location, you can now safely delete the originals if no longer needed.\n"
         if eyaml_publickey_path != eyaml_key_locations[1]:
-            final_message += f"The eyaml public key you provided at \"{eyaml_publickey_path}\" has been copied to the correct location, you can now safely delete the originals if no longer needed.\n"
+            if args.remove_original_keys:
+                try:
+                    os.remove(eyaml_publickey_path)
+                except Exception as e:
+                    print_error(f"Failed to remove the original eyaml public key. Error: {e}")
+            else:
+                final_message += f"The eyaml public key you provided at \"{eyaml_publickey_path}\" has been copied to the correct location, you can now safely delete the originals if no longer needed.\n"
     # Print the last message and say goodbye
     if failed_run:
         print_important(final_message)
