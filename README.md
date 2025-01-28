@@ -90,3 +90,7 @@ The scripts can also be run completely non-interactively by supplying all requir
 | `--skip-optional-prompts`     | Pass this parameter to skip all the optional prompts in the bootstrap script. This is useful if you know you've provided all the information you require via the command line.                                                    | N             | N/A                    |
 | `--skip-confirmation`         | Caution: Use with care.Passing this parameter allows you to bypass the confirmation that is displayed during the bootstrap process. This can be useful if you're confident you've passed in all the required information.     | N             | N/A                    |
 | `--unattended`                | Instructs the script to run in `unattended mode` this bypasses all user prompts and will fail where user input would be required to correct an error.                                                                             | N             | N/A                    |
+
+## Examples
+
+You can find some examples of how to use the bootstrap scripts in the [EXAMPLES.md](docs/EXAMPLES.md) file.
