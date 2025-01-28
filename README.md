@@ -94,3 +94,52 @@ The scripts can also be run completely non-interactively by supplying all requir
 ## Examples
 
 You can find some examples of how to use the bootstrap scripts in the [EXAMPLES.md](docs/EXAMPLES.md) file.
+
+## Development
+
+> ℹ Please keep in mind the philosophy of these scripts is to be simple yet powerful.
+They should guide a novice user through the process of bootstrapping a Puppet server or agent, but also allow an experienced user to automate the process.
+
+### Building the Python scripts
+
+The `bootstrap_puppet-linux.py` and `bootstrap_puppet-server.py` scripts share a lot of the same code.
+Therefore to cut down on duplication, the shared code has been moved into a separate file called [`common.py`](.build/PuppetPython/common.py) this is then combined with the main script files ([`puppet_agent.py`](.build/PuppetPython/puppet_agent.py) and [`puppet_server.py`](.build/PuppetPython/puppet_server.py)) to create the final scripts.
+
+To build the scripts, simply run the following command from the root of the repository:
+
+```powershell
+.\.build\PuppetPython\build.ps1
+```
+
+This will update the `bootstrap_puppet-linux.py` and `bootstrap_puppet-server.py` scripts in the root of the repository, with any changes made to the `puppet_agent.py` and `puppet_server.py` files in the `.build/PuppetPython` directory.
+
+### Testing
+
+In the `.build` directory you will find a Vagrantfile that can be used to test the scripts in a controlled environment.
+
+#### Pre-requisites
+
+* Vagrant (Tested with version 2.4.1)
+* VirtualBox (Tested with version 7.0.14)
+* At least 16GB of RAM on the host machine
+
+#### Running the tests
+
+To run the automated tests, simply run the following command from the `.build` directory:
+
+```bash
+vagrant up
+```
+
+This will first bootstrap the Puppet server and then 2 agents - one Windows and one Linux.
+All 3 machines will be bootstrapped using the scripts in this repository in unattended mode.
+
+If you wish to run the tests in interactive mode, you can do so by running the following command:
+
+```bash
+vagrant up auto-puppetserver manual-linux-agent manual-windows-agent
+```
+
+This will spin up a Puppet server and 2 agents, the Puppet server will be bootstrapped in unattended mode, however the agents won't be bootstrapped at all.
+You can then `vagrant ssh` or `vagrant winrm` into the machines and run the scripts manually.
+The scripts should be available in the `/puppet_bootstrap` directory on the machines.
