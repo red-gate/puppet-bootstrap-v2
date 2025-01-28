@@ -30,7 +30,7 @@ catch
 
 # Grab everything in-between the common section markers.
 $CommonSectionStartIndex = ($CommonFileContent.IndexOf($CommonSectionStart) + 1)
-$CommonSectionEndIndex = ($CommonFileContent.IndexOf($CommonSectionEnd) - 1)
+$CommonSectionEndIndex = $CommonFileContent.IndexOf($CommonSectionEnd)
 $CommonSection = $CommonFileContent[$CommonSectionStartIndex..$CommonSectionEndIndex] | Out-String
 
 Write-Debug "Common Section: $CommonSection"
@@ -53,3 +53,5 @@ catch
 {
     throw "Failed to write the updated content back to the files.`n$($_.Exception.Message)"
 }
+
+# TODO: Vagrant tests?
