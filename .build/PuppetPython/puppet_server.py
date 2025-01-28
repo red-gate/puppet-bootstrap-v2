@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
-# This script aids in the bootstrapping of a Puppet Server
+# ==============================================================================
+# This script aids in the provisioning of a new Puppet server
+# It can be run in an unattended mode or in full interactive mode with guided
+# prompts to help the user configure the server.
+# Detailed information on the script can be found in the repo's README.md file.
+# ==============================================================================
 
 import os
 import sys

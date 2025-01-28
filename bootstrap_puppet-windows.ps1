@@ -4,19 +4,8 @@
 .DESCRIPTION
     This script will guide you through the process of installing and configuring Puppet on Windows.
     The script can be run fully automated by passing in all the required parameters, or it can be run interactively
-    to allow you to specify the required information as you go.
-.NOTES
-    This script must be run in an elevated PowerShell session.
-    Detailed information on how to run this script can be found in the README.md file.
-.EXAMPLE
-    bootstrap_puppet-windows.ps1 `
-        -PuppetServer 'puppet.example.com' `
-        -DomainName 'example.com' `
-        -PuppetEnvironment 'production' `
-        -MajorVersion 7
-
-    This will install Puppet agent version 7 and configure it to connect to puppet.example.com in the production environment.
-    As the optional parameters are not specified the script will prompt you for the rest of the information that may be required
+    which will guide you through the process of installing and configuring Puppet.
+    For detailed information refer to the repository README.md file.
 #>
 [CmdletBinding()]
 param (
