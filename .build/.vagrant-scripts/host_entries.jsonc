@@ -1,0 +1,26 @@
+[
+    {
+        "hostname": "puppet7.example.com",
+        "ip": "192.168.69.2"
+    },
+    {
+        "hostname": "puppetserver.example.com",
+        "ip": "192.168.69.2"
+    },
+    {
+        "hostname": "la01.example.com",
+        "ip": "192.168.69.3"
+    },
+    {
+        "hostname": "wa01.example.com",
+        "ip": "192.168.69.4"
+    },
+    {
+        "hostname": "la02.example.com",
+        "ip": "192.168.69.5"
+    },
+    {
+        "hostname": "wa02.example.com",
+        "ip": "192.168.69.6"
+    }
+]
