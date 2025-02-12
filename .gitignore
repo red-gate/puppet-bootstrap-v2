@@ -1,5 +1,8 @@
 # Ignore the .vagrant directory
 .vagrant/
 
+# Ignore any deployment keys
+.build/.vagrant-files/*deploy_key*
+
 # Ignore the pycache directory
 __pycache__/
