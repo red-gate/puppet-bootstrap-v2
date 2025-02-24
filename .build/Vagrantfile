@@ -1,0 +1,82 @@
+# frozen_string_literal: true
+
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure('2') do |config|
+  # Ensure all agents install the same version of Puppet by default
+  # This can be overridden by setting the PUPPET_MAJOR_VERSION environment variable
+  puppet_major_version = '7'
+  # By default give all machines 2 cores and 2GB of RAM (can be overridden on a per machine basis)
+  config.vm.provider 'virtualbox' do |vb|
+    vb.memory = '2048'
+    vb.cpus = 2
+  end
+  config.vm.synced_folder '../', '/puppet_bootstrap', disabled: false
+  # Config for a Puppet server that stands itself up without
+  # any user interaction
+  config.vm.define 'auto-puppetserver', primary: true do |server|
+    server.vm.box = 'bento/ubuntu-22.04'
+    server.vm.hostname = 'puppetserver.example.com'
+    server.vm.network :private_network, ip: '192.168.69.2'
+    server.vm.network :forwarded_port, guest: 8140, host: 8140 # Puppet agent comms
+    server.vm.network :forwarded_port, guest: 80, host: 8080 # Puppet Dashboard
+    # Give the puppet server more resources as it chugs a bit with only 2GB of RAM
+    server.vm.provider 'virtualbox' do |vb|
+      vb.memory = '4096'
+    end
+    server.vm.provision 'shell',
+      path: '.vagrant-scripts/add_host_entries_nix.py'
+    server.vm.provision 'shell',
+      path: '.vagrant-scripts/bootstrap_puppetserver.sh',
+      args:[
+        puppet_major_version.to_s,
+        'puppetserver.example.com',
+      ]
+  end
+  # Config for a fully automated Linux Puppet agent
+  config.vm.define 'auto-linux-agent', autostart: true do |ala|
+    ala.vm.box = 'bento/ubuntu-22.04'
+    ala.vm.hostname = 'la01'
+    ala.vm.network :private_network, ip: '192.168.69.3'
+    ala.vm.provision 'shell',
+      path: '.vagrant-scripts/add_host_entries_nix.py'
+    ala.vm.provision 'shell',
+      path: '.vagrant-scripts/bootstrap_linux.sh',
+      args:[puppet_major_version.to_s, "la.example.com"]
+  end
+  # Config for a fully automated Windows Puppet agent
+  config.vm.define 'auto-windows-agent', autostart: true do |awa|
+    awa.vm.box = 'gusztavvargadr/windows-server' # TODO: update this to use our box
+    awa.vm.hostname = 'wa01'
+    awa.vm.network :private_network, ip: '192.168.69.4'
+    awa.vm.provision 'shell',
+      path: '.vagrant-scripts/Add-HostEntries.ps1'
+    awa.vm.provision 'shell',
+      path: '.vagrant-scripts/bootstrap_windows.ps1',
+      args:[
+        '-Hostname',
+        'wa01.example.com',
+        '-AgentVersion',
+        puppet_major_version.to_s,
+      ]
+  end
+  # Config for an un-bootstrapped Linux machine that can be provisioned
+  # manually, useful when you want to test the bootstrap scripts
+  config.vm.define 'manual-linux-agent', autostart: false do |mla|
+    mla.vm.box = 'bento/ubuntu-22.04'
+    mla.vm.hostname = 'la02'
+    mla.vm.network :private_network, ip: '192.168.69.5'
+    mla.vm.provision 'shell',
+      path: '.vagrant-scripts/add_host_entries_nix.py'
+  end
+  # Config for an un-bootstrapped Windows machine that can be provisioned
+  # manually, useful when you want to test the bootstrap scripts
+  config.vm.define 'manual-windows-agent', autostart: false do |mwa|
+    mwa.vm.box = 'gusztavvargadr/windows-server' # TODO: update this to use our box
+    mwa.vm.hostname = 'wa02'
+    mwa.vm.network :private_network, ip: '192.168.69.6'
+    mwa.vm.provision 'shell',
+      path: '.vagrant-scripts/Add-HostEntries.ps1'
+  end
+end
