@@ -553,7 +553,6 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-
 # Main function
 def main():
     # Set up logging - by default only log errors
@@ -711,7 +710,7 @@ def main():
     # Secondly we end up with odd nodes hanging around in Puppet which makes it harder to manage.
     # Therefore ensure the hostname is fully qualified at this stage, even if the user is
     # setting a custom certname for Puppet
-    if not re.match(r"\.", new_hostname):
+    if not re.match(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}", new_hostname):
         print_important('The new hostname was not fully qualified, appending the domain name')
         # Add the same domain as the Puppetserver, that's usually a safe bet
         new_hostname = f"{new_hostname}.{domain_name}"

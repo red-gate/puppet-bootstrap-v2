@@ -916,7 +916,7 @@ def main():
     else:
         new_hostname = args.new_hostname
 
-    if not re.match(r"\.", new_hostname):
+    if not re.match(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}", new_hostname):
         if unattended:
             print_error(
                 "Error: The hostname must be a FQDN. Please provide a hostname with a domain name"
