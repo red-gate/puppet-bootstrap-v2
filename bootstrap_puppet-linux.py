@@ -519,6 +519,7 @@ def parse_args():
     )
     parser.add_argument(
         "--csr-retry-interval",
+        type=int,
         help="How long to wait for the certificate to be signed",
         default=30,
     )
