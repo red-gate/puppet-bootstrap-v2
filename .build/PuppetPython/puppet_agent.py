@@ -195,7 +195,7 @@ def main():
             )
             sys.exit(1)
 
-    current_hostname = subprocess.check_output(["hostname"], text=True).strip()
+    current_hostname = subprocess.check_output(["hostname"], universal_newlines=True).strip()
     new_hostname = current_hostname
 
     # If the environment is set to the default of production then check if the user wants to change it
