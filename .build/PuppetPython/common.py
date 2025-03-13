@@ -412,7 +412,7 @@ def set_puppet_config_option(config_options, config_file_path=None, section="age
             section,
         ]
 
-        result = subprocess.run(command, capture_output=True, universal_newlines=True)
+        result = subprocess.run(command, shell=True, check=True, universal_newlines=True)
 
         if result.returncode != 0:
             raise Exception(
