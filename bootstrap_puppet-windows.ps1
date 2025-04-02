@@ -397,13 +397,22 @@ function Install-Puppet
     )
     $URIBase = "https://downloads.puppetlabs.com/windows/puppet$MajorVersion"
 
-    if ($ExactVersion)
+    if ( [Environment]::Is64BitOperatingSystem )
     {
-        $URI = "$URIBase/puppet-agent-$ExactVersion-x64.msi"
+        $arch = 'x64'
     }
     else
     {
-        $URI = "$URIBase/puppet-agent-x64-latest.msi"
+        $arch = 'x86'
+    }
+
+    if ($ExactVersion)
+    {
+        $URI = "$URIBase/puppet-agent-$ExactVersion-$arch.msi"
+    }
+    else
+    {
+        $URI = "$URIBase/puppet-agent-$arch-latest.msi"
     }
 
     $DownloadPath = "$env:TEMP\puppet-agent.msi"
