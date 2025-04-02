@@ -332,7 +332,7 @@ function Set-PuppetConfigOption
     {
         $ConfigFilePath = 'C:\ProgramData\PuppetLabs\puppet\etc\puppet.conf'
     }
-    $PuppetBin = Get-Command 'puppet' | Select-Object -ExpandProperty Source
+    $PuppetBin = Get-Command 'puppet' | Select-Object -ExpandProperty Path -ErrorAction SilentlyContinue
     if (!(Test-Path $PuppetBin))
     {
         throw "Could not find the puppet command at $PuppetBin"
