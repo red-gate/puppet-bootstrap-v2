@@ -17,7 +17,7 @@ param (
     # The Puppet server to connect to
     [Parameter(Mandatory = $false)]
     [string]
-    $PuppetServer,
+    $PuppetServer = 'puppet6.red-gate.com',
 
     # The Puppet server port to connect to
     [Parameter(Mandatory = $false)]
@@ -25,16 +25,19 @@ param (
     $PuppetServerPort = 8140,
 
     # The Puppet environment to use
+    [Alias('Env')]
     [Parameter(Mandatory = $false)]
     [string]
     $Environment = 'production',
 
     # Set this to change the default certificate name
+    [Alias('CN')]
     [Parameter(Mandatory = $false)]
     [string]
     $CertificateName,
 
     # Any certificate extensions to add to the Puppet agent certificate
+    [Alias('Exts')]
     [Parameter(Mandatory = $false)]
     [hashtable]
     $CSRExtensions,
@@ -55,6 +58,7 @@ param (
     $PuppetServiceAccountDomain,
 
     # If set the Puppet agent will wait for the certificate to be signed before continuing
+    [Alias('CI')]
     [Parameter(Mandatory = $false)]
     [string]
     $CSRRetryInterval = 30,
