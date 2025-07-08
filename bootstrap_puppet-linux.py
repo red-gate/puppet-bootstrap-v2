@@ -455,6 +455,8 @@ def set_hostname(new_hostname):
     log.info(f"Setting the hostname to {new_hostname}")
     try:
         subprocess.run(["hostname", new_hostname], check=True)
+        with open("/etc/hostname", "w") as hostname_file:
+            hostname_file.write(new_hostname)
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to set hostname. Error: {e}")
         sys.exit(1)
