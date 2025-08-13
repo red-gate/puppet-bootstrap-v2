@@ -434,6 +434,10 @@ function Install-Puppet
             $URI = "$URIBase/puppet-agent-$arch-latest.msi"
         }
     }
+    
+    # Ensure we have TLS1.2 and TLS1.3 enabled. Newer Windows versions do this by default
+    # but we also need to support things like Windows Server 2012 R2, which does not.
+    [Net.ServicePointManager]::SecurityProtocol = "tls13, tls12"
 
     $DownloadPath = "$env:TEMP\puppet-agent.msi"
     Write-Verbose "Downloading Puppet agent from $URI to $DownloadPath"
