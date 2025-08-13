@@ -14,6 +14,11 @@ param (
     [int]
     $AgentVersion = 7,
 
+    # An optional URL to the agent download.
+    [Parameter(Mandatory = $false)]
+    [string]
+    $AgentURL,
+
     # The Puppet server to connect to
     [Parameter(Mandatory = $false)]
     [string]
@@ -397,27 +402,42 @@ function Install-Puppet
 
         [Parameter(Mandatory = $false)]
         [string]
-        $PuppetServiceAccountDomain
+        $PuppetServiceAccountDomain,
+
+        [Parameter(Mandatory = $false)]
+        [string]
+        $AgentURL
     )
-    $URIBase = "https://downloads.puppetlabs.com/windows/puppet$MajorVersion"
 
-    if ( [Environment]::Is64BitOperatingSystem )
-    {
-        $arch = 'x64'
+    if($AgentURL) {
+        $URI = $AgentUrl
     }
-    else
+    else 
     {
-        $arch = 'x86'
-    }
+        $URIBase = "https://downloads.puppetlabs.com/windows/puppet$MajorVersion"
 
-    if ($ExactVersion)
-    {
-        $URI = "$URIBase/puppet-agent-$ExactVersion-$arch.msi"
+        if ( [Environment]::Is64BitOperatingSystem )
+        {
+            $arch = 'x64'
+        }
+        else
+        {
+            $arch = 'x86'
+        }
+
+        if ($ExactVersion)
+        {
+            $URI = "$URIBase/puppet-agent-$ExactVersion-$arch.msi"
+        }
+        else
+        {
+            $URI = "$URIBase/puppet-agent-$arch-latest.msi"
+        }
     }
-    else
-    {
-        $URI = "$URIBase/puppet-agent-$arch-latest.msi"
-    }
+    
+    # Ensure we have TLS1.2 and TLS1.3 enabled. Newer Windows versions do this by default
+    # but we also need to support things like Windows Server 2012 R2, which does not.
+    [Net.ServicePointManager]::SecurityProtocol = "tls13, tls12"
 
     $DownloadPath = "$env:TEMP\puppet-agent.msi"
     Write-Verbose "Downloading Puppet agent from $URI to $DownloadPath"
@@ -752,6 +772,10 @@ if ($PuppetServiceAccountCredentials)
 if ($PuppetServiceAccountDomain)
 {
     $InstallArgs.Add('PuppetServiceAccountDomain', $PuppetServiceAccountDomain)
+}
+if ($AgentURL)
+{
+    $InstallArgs.Add('AgentURL', $AgentURL)
 }
 try
 {
