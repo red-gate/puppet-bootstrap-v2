@@ -248,6 +248,7 @@ function Get-CSRAttributes
         $CSRExtensions.Add($KeyName, $Value)
         $Continue = Get-Response 'Would you like to add another key? [y]es/[n]o' 'bool'
     }
+    return $CSRExtensions
 }
 
 function Set-CertificateExtensions
