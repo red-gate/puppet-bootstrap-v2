@@ -437,8 +437,14 @@ function Install-Puppet
     }
     
     # Ensure we have TLS1.2 and TLS1.3 enabled. Newer Windows versions do this by default
-    # but we also need to support things like Windows Server 2012 R2, which does not.
-    [Net.ServicePointManager]::SecurityProtocol = "tls13, tls12"
+    # but we also need to support older versions, which do not.
+    if( @('6.0', '6.1') -contains [Environment]::OSVersion.Version.ToString(2)) {
+        # Server 2008 and 2008R2 only have support for TLS 1.2
+        [Net.ServicePointManager]::SecurityProtocol = "tls12"
+    } else {
+        [Net.ServicePointManager]::SecurityProtocol = "tls13, tls12"
+    }
+    
 
     $DownloadPath = "$env:TEMP\puppet-agent.msi"
     Write-Verbose "Downloading Puppet agent from $URI to $DownloadPath"
